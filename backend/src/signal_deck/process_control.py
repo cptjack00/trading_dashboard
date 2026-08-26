@@ -19,6 +19,7 @@ import json
 import os
 import signal
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -89,6 +90,11 @@ class ProcessRegistry:
         self._registry_path = registry_path
         self._stop_log_path = stop_log_path
         self._procs: dict[str, subprocess.Popen] = {}
+        # FastAPI's sync `def` routes run each request in a threadpool, so two
+        # near-simultaneous stop requests for the same run could otherwise both
+        # read `stop_requested_at is None` before either writes it back - this
+        # serializes the whole read-check-write so at most one ever sends SIGTERM.
+        self._lock = threading.Lock()
 
     def start_run(
         self,
@@ -111,18 +117,24 @@ class ProcessRegistry:
             {"run_id": run_id, "run_type": run_type, "state": "live", "started_at": started_at, "ended_at": None},
         )
 
-        log_file = (run_dir / "process.log").open("wb")
-        proc = subprocess.Popen(
-            [binary, "--config", str(config_path)], stdout=log_file, stderr=subprocess.STDOUT
-        )
+        # The child inherits its own duplicated copy of the fd at Popen() time,
+        # so the parent's handle can (and should) close right away rather than
+        # staying open, unused, for the run's entire lifetime.
+        with (run_dir / "process.log").open("wb") as log_file:
+            proc = subprocess.Popen(
+                [binary, "--config", str(config_path)], stdout=log_file, stderr=subprocess.STDOUT
+            )
 
         key = _key(project, run_id)
-        entries = _load(self._registry_path)
-        entries[key] = asdict(
-            RegistryEntry(project=project, run_id=run_id, pid=proc.pid, run_dir=str(run_dir), started_at=started_at)
-        )
-        _save(self._registry_path, entries)
-        self._procs[key] = proc
+        with self._lock:
+            entries = _load(self._registry_path)
+            entries[key] = asdict(
+                RegistryEntry(
+                    project=project, run_id=run_id, pid=proc.pid, run_dir=str(run_dir), started_at=started_at
+                )
+            )
+            _save(self._registry_path, entries)
+            self._procs[key] = proc
 
         return {
             "run_id": run_id,
@@ -136,16 +148,17 @@ class ProcessRegistry:
 
     def stop_run(self, *, project: str, run_id: str) -> None:
         key = _key(project, run_id)
-        entries = _load(self._registry_path)
-        entry = entries.get(key)
-        if entry is None:
-            raise RunNotFoundError(key)
+        with self._lock:
+            entries = _load(self._registry_path)
+            entry = entries.get(key)
+            if entry is None:
+                raise RunNotFoundError(key)
 
-        if entry.get("stop_requested_at") is None:
-            entry["stop_requested_at"] = time.time()
-            _save(self._registry_path, entries)
-            if is_pid_alive(entry["pid"]):
-                os.kill(entry["pid"], signal.SIGTERM)
+            if entry.get("stop_requested_at") is None:
+                entry["stop_requested_at"] = time.time()
+                _save(self._registry_path, entries)
+                if is_pid_alive(entry["pid"]):
+                    os.kill(entry["pid"], signal.SIGTERM)
 
         self._append_stop_record(project=project, run_id=run_id)
 

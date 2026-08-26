@@ -123,12 +123,19 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
   const [confirming, setConfirming] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [stopped, setStopped] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleConfirm() {
     setStopping(true)
-    await fetch(`/api/runs/${project}/${runId}/stop`, { method: 'POST' })
+    setError(null)
+    const res = await fetch(`/api/runs/${project}/${runId}/stop`, { method: 'POST' })
     setStopping(false)
-    setStopped(true)
+    if (res.ok) {
+      setStopped(true)
+    } else {
+      const body = await res.json().catch(() => null)
+      setError(body?.detail ?? 'Could not stop run')
+    }
   }
 
   if (stopped) {
@@ -152,6 +159,7 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
       <button disabled={stopping} onClick={() => setConfirming(false)}>
         Cancel
       </button>
+      {error && <span role="alert">{error}</span>}
     </span>
   )
 }

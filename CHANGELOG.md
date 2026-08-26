@@ -78,12 +78,14 @@
   recursive `**/*.toml` scan of them on demand. A "Config roots" panel in the
   UI lets an operator add a new root directory per project and preview a
   scan — no upload, catalog, or validation wizard. (#8)
-- New Run flow: a "New run" panel walks Project → Run type → Config (from
-  #8's scan list), then a LIVE run requires an explicit arm toggle before
-  Start is enabled while a BACKTEST run gets a plain, always-enabled "Start
-  backtest" button with a "reads historical data only" note. Backend:
-  `POST /api/runs` (`process_control.py`'s `ProcessRegistry.start_run`)
-  `subprocess.Popen`s the project's configured binary
+- New Run flow: a two-stage "New run" panel — Stage 1 picks Project → Run
+  type → Config (from #8's scan list), Stage 2 (revealed once a config is
+  picked) requires an explicit arm toggle before Start is enabled for LIVE,
+  or shows a plain, always-enabled "Start backtest" button with a "reads
+  historical data only" note for BACKTEST. Backend: `POST /api/runs`
+  (`process_control.py`'s `ProcessRegistry.start_run`) rejects any `config`
+  path that isn't under one of the project's own registered scan roots
+  (#8), then `subprocess.Popen`s the project's configured binary
   (`SIGNAL_DECK_RUSTLE_BINARY` / `SIGNAL_DECK_TICKTRADER_BINARY`) with
   `--config <path>`, redirects stdout/stderr to a per-run log file, writes
   the run's `run.json` manifest immediately (so it shows up in the existing

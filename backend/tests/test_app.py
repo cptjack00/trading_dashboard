@@ -358,12 +358,35 @@ def test_start_run_rejects_invalid_run_type(settings, tmp_path):
 def test_start_run_missing_config_rejected(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
     settings.rustle_binary = _fake_binary(tmp_path)
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
     client = make_client(settings, tmp_path)
     login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(configs_dir)})
+
     resp = client.post(
-        "/api/runs", json={"project": "rustle", "run_type": "backtest", "config": str(tmp_path / "nope.toml")}
+        "/api/runs", json={"project": "rustle", "run_type": "backtest", "config": str(configs_dir / "nope.toml")}
     )
     assert resp.status_code == 400
+
+
+def test_start_run_rejects_config_outside_registered_roots(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    (tmp_path / "configs").mkdir()
+    outside = tmp_path / "outside" / "strategy.toml"
+    outside.parent.mkdir()
+    outside.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path / "configs")})
+
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "backtest", "config": str(outside)})
+    assert resp.status_code == 400
+    assert "registered" in resp.json()["detail"]
 
 
 def test_start_run_spawns_process_and_appears_in_run_list(settings, tmp_path):
@@ -371,11 +394,13 @@ def test_start_run_spawns_process_and_appears_in_run_list(settings, tmp_path):
     settings.rustle_binary = _fake_binary(tmp_path)
     settings.process_registry_file = tmp_path / "process_registry.json"
     settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
     config = tmp_path / "strategy.toml"
     config.write_text("name = 'x'\n")
 
     client = make_client(settings, tmp_path)
     login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
 
     resp = client.post("/api/runs", json={"project": "rustle", "run_type": "live", "config": str(config)})
     assert resp.status_code == 200
@@ -414,11 +439,13 @@ def test_stop_run_sends_sigterm_and_appears_stopped_after_reconcile(settings, tm
     settings.rustle_binary = _fake_binary(tmp_path)
     settings.process_registry_file = tmp_path / "process_registry.json"
     settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
     config = tmp_path / "strategy.toml"
     config.write_text("name = 'x'\n")
 
     client = make_client(settings, tmp_path)
     login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
     started = client.post("/api/runs", json={"project": "rustle", "run_type": "live", "config": str(config)}).json()
     run_id = started["run_id"]
     pid = client.app.state.process_registry._procs[f"rustle:{run_id}"].pid

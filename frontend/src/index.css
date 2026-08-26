@@ -340,6 +340,12 @@ code {
   color: var(--text);
 }
 
+.new-run-stage--2 {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 .new-run-arm {
   display: flex;
   align-items: center;

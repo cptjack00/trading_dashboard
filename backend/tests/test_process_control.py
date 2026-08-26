@@ -140,6 +140,43 @@ def test_stop_run_twice_rapidly_sends_at_most_one_sigterm(monkeypatch, registry,
     _wait_until(lambda: _reap(registry) or not is_pid_alive(pid))
 
 
+def test_stop_run_concurrent_calls_send_at_most_one_sigterm(monkeypatch, registry, fake_binary, config_file, tmp_path):
+    """Two truly concurrent stop requests (not just sequential) must still
+    dedupe - FastAPI's sync routes run each request in a threadpool, so a
+    check-then-write race here would let both send SIGTERM."""
+    import threading
+
+    run = registry.start_run(
+        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+    )
+    pid = _registered_pid(registry, "rustle", run["run_id"])
+
+    kill_calls = []
+    real_kill = os.kill
+
+    def spy_kill(target_pid, sig):
+        kill_calls.append((target_pid, sig))
+        return real_kill(target_pid, sig)
+
+    monkeypatch.setattr("signal_deck.process_control.os.kill", spy_kill)
+
+    barrier = threading.Barrier(2)
+
+    def call_stop():
+        barrier.wait(timeout=2)
+        registry.stop_run(project="rustle", run_id=run["run_id"])
+
+    threads = [threading.Thread(target=call_stop) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=2)
+
+    sigterm_calls = [c for c in kill_calls if c[1] == signal.SIGTERM]
+    assert sigterm_calls == [(pid, signal.SIGTERM)]
+    _wait_until(lambda: _reap(registry) or not is_pid_alive(pid))
+
+
 def test_stop_run_writes_durable_record_for_every_request(registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
         project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"

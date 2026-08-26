@@ -137,6 +137,15 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
     _RUNS_ROOTS = {"rustle": lambda: settings.rustle_runs_dir, "ticktrader": lambda: settings.ticktrader_runs_dir}
     _BINARIES = {"rustle": lambda: settings.rustle_binary, "ticktrader": lambda: settings.ticktrader_binary}
 
+    def _config_is_registered(project: str, config_path: str) -> bool:
+        # A launchable config must come from one of the project's own scanned
+        # roots (#8) - otherwise `/api/runs` would happily Popen the configured
+        # trading binary against an arbitrary path on disk just because an
+        # authenticated session named it.
+        roots = load_config_roots(settings.config_roots_file).get(project, [])
+        resolved = Path(config_path).resolve()
+        return any(resolved.is_relative_to(Path(root).resolve()) for root in roots)
+
     @app.post("/api/runs")
     def start_run(body: StartRunRequest, request: Request) -> dict:
         require_session(request)
@@ -147,6 +156,8 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
         binary = _BINARIES[body.project]()
         if runs_root is None or binary is None:
             raise HTTPException(status_code=400, detail=f"{body.project} is not configured to launch runs")
+        if not _config_is_registered(body.project, body.config):
+            raise HTTPException(status_code=400, detail="config is not under a registered config root")
         try:
             return process_registry.start_run(
                 project=body.project,

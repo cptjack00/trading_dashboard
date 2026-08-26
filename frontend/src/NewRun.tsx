@@ -67,61 +67,68 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
       </button>
       <h2>New run</h2>
 
-      <p className="new-run-label">Project</p>
-      <div className="run-tabs">
-        {PROJECTS.map((p) => (
+      <section className="new-run-stage">
+        <p className="new-run-label">1. Project</p>
+        <div className="run-tabs">
+          {PROJECTS.map((p) => (
+            <button
+              key={p}
+              className={`run-tab${project === p ? ' run-tab--active' : ''}`}
+              onClick={() => selectProject(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+
+        <p className="new-run-label">2. Run type</p>
+        <div className="run-tabs">
+          {(['live', 'backtest'] as RunType[]).map((t) => (
+            <button
+              key={t}
+              className={`run-tab${runType === t ? ' run-tab--active' : ''}`}
+              onClick={() => selectRunType(t)}
+            >
+              {t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <p className="new-run-label">
+          <label htmlFor="new-run-config">3. Config</label>
+        </p>
+        <select id="new-run-config" value={config} onChange={(e) => selectConfig(e.target.value)}>
+          <option value="">Select a config…</option>
+          {configs.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      {config && (
+        <section className="new-run-stage new-run-stage--2">
+          {runType === 'live' ? (
+            <label className="new-run-arm">
+              <input type="checkbox" checked={armed} onChange={(e) => setArmed(e.target.checked)} />
+              This launches a real trading process.
+            </label>
+          ) : (
+            <p className="overview-empty">Reads historical data only.</p>
+          )}
+
+          {error && <p role="alert">{error}</p>}
+
           <button
-            key={p}
-            className={`run-tab${project === p ? ' run-tab--active' : ''}`}
-            onClick={() => selectProject(p)}
+            className={runType === 'live' ? 'danger-button' : undefined}
+            disabled={!canStart || starting}
+            onClick={handleStart}
           >
-            {p}
+            {runType === 'live' ? 'Start' : 'Start backtest'}
           </button>
-        ))}
-      </div>
-
-      <p className="new-run-label">Run type</p>
-      <div className="run-tabs">
-        {(['live', 'backtest'] as RunType[]).map((t) => (
-          <button
-            key={t}
-            className={`run-tab${runType === t ? ' run-tab--active' : ''}`}
-            onClick={() => selectRunType(t)}
-          >
-            {t.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
-      <p className="new-run-label">
-        <label htmlFor="new-run-config">Config</label>
-      </p>
-      <select id="new-run-config" value={config} onChange={(e) => selectConfig(e.target.value)}>
-        <option value="">Select a config…</option>
-        {configs.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-
-      {config && runType === 'live' && (
-        <label className="new-run-arm">
-          <input type="checkbox" checked={armed} onChange={(e) => setArmed(e.target.checked)} />
-          This launches a real trading process.
-        </label>
+        </section>
       )}
-      {config && runType === 'backtest' && <p className="overview-empty">Reads historical data only.</p>}
-
-      {error && <p role="alert">{error}</p>}
-
-      <button
-        className={runType === 'live' ? 'danger-button' : undefined}
-        disabled={!canStart || starting}
-        onClick={handleStart}
-      >
-        {runType === 'live' ? 'Start' : 'Start backtest'}
-      </button>
     </div>
   )
 }
