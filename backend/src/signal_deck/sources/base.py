@@ -17,6 +17,9 @@ DecodeFn = Callable[[bytes, "bytes | KeyResolver | None", bool], bytes]
 
 
 def _plaintext_decoder(raw_line: bytes, key: "bytes | KeyResolver | None", encrypted: bool) -> bytes:
+    # ponytail: no AEAD decode implemented yet, even when the magic header marks a
+    # file encrypted. Real per-line decryption arrives via a `decoder` passed to the
+    # adapter once the writer-side scheme (key format, framing) is decided.
     return raw_line
 
 
