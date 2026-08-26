@@ -5,11 +5,10 @@ subdirectory carries a small `run.json` manifest (run_id, run_type, state,
 started_at, ended_at, ...) alongside that project's log files.
 
 ponytail: the manifest schema is trusted, not validated against a formal
-contract. It's the natural place for #9's process-start registry to write
-to directly once it exists; a manifest.json for it is fabricated in tests
-until then. Malformed/incomplete manifests are skipped rather than raising,
-so one bad run (e.g. caught mid-write by #9 later) can't take down the rest
-of the list.
+contract. #9's process-start registry (`process_control.py`) writes and
+updates it directly. Malformed/incomplete manifests are skipped rather than
+raising, so one bad run (e.g. caught mid-write) can't take down the rest of
+the list.
 """
 
 from __future__ import annotations
