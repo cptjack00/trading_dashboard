@@ -13,3 +13,11 @@ __pytest_cache__/
 cache/
 
 checkpoints/
+
+# backend
+backend/.venv/
+backend/.pytest_cache/
+
+# local secrets
+*.env
+!*.env.example
