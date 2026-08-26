@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import RunList from './RunList'
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous'
 
@@ -62,7 +63,7 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
         <h1>Signal Deck</h1>
         <button onClick={handleLogout}>Log out</button>
       </header>
-      <p>No runs yet.</p>
+      <RunList />
     </main>
   )
 }

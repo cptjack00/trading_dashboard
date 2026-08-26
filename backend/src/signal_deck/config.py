@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 3600
 DEFAULT_PORT = 8000
@@ -31,6 +32,16 @@ class Settings:
         self.session_ttl_seconds = int(
             os.environ.get("SIGNAL_DECK_SESSION_TTL", DEFAULT_SESSION_TTL_SECONDS)
         )
+
+        # ponytail: optional, no default path guessed — an unset root just means
+        # that project contributes no runs to the list yet.
+        self.rustle_runs_dir = _optional_path("SIGNAL_DECK_RUSTLE_RUNS_DIR")
+        self.ticktrader_runs_dir = _optional_path("SIGNAL_DECK_TICKTRADER_RUNS_DIR")
+
+
+def _optional_path(env_var: str) -> Path | None:
+    value = os.environ.get(env_var)
+    return Path(value) if value else None
 
 
 def load_settings() -> Settings:
