@@ -37,12 +37,19 @@ def load_config_roots(store_path: Path) -> dict[str, list[str]]:
 
 def add_config_root(store_path: Path, project: str, root: str) -> list[str]:
     """Add `root` to `project`'s scan list (deduped), persist, and return the
-    updated list for that project."""
+    updated list for that project.
+
+    `root` is resolved to an absolute, normalized path before storing/deduping
+    so a relative path doesn't silently depend on the server's cwd at scan
+    time, and cosmetic variants (trailing slash, relative vs. absolute) of the
+    same directory don't accumulate as separate entries.
+    """
     _check_project(project)
+    normalized = str(Path(root).resolve())
     roots = load_config_roots(store_path)
     project_roots = roots.setdefault(project, [])
-    if root not in project_roots:
-        project_roots.append(root)
+    if normalized not in project_roots:
+        project_roots.append(normalized)
     store_path.parent.mkdir(parents=True, exist_ok=True)
     store_path.write_text(json.dumps(roots, indent=2))
     return project_roots

@@ -40,6 +40,17 @@ def test_add_config_root_rejects_unknown_project(tmp_path):
         add_config_root(store, "bogus", "/a")
 
 
+def test_add_config_root_normalizes_before_dedup(tmp_path):
+    store = tmp_path / "config_roots.json"
+    target = tmp_path / "configs"
+    target.mkdir()
+
+    add_config_root(store, "rustle", str(target) + "/")
+    roots = add_config_root(store, "rustle", str(target))
+
+    assert roots == [str(target)]
+
+
 def test_scan_configs_finds_nested_toml_files(tmp_path):
     root = tmp_path / "configs"
     (root / "strategies" / "nested").mkdir(parents=True)
