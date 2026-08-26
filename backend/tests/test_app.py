@@ -191,6 +191,86 @@ def test_format_sse_delta_and_done():
     assert _format_sse(None) == "event: done\ndata: {}\n\n"
 
 
+def test_config_roots_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.get("/api/config-roots/rustle")
+    assert resp.status_code == 401
+
+
+def test_config_roots_unknown_project_is_404(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/config-roots/bogus")
+    assert resp.status_code == 404
+
+
+def test_config_roots_empty_before_any_added(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/config-roots/rustle")
+    assert resp.status_code == 200
+    assert resp.json() == {"roots": []}
+
+
+def test_config_roots_add_persists_and_lists(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    client = make_client(settings, tmp_path)
+    login(client)
+
+    resp = client.post("/api/config-roots/rustle", json={"root": str(configs_dir)})
+    assert resp.status_code == 200
+    assert resp.json() == {"roots": [str(configs_dir)]}
+
+    resp = client.get("/api/config-roots/rustle")
+    assert resp.json() == {"roots": [str(configs_dir)]}
+
+
+def test_config_roots_add_rejects_non_directory(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    client = make_client(settings, tmp_path)
+    login(client)
+
+    resp = client.post("/api/config-roots/rustle", json={"root": str(tmp_path / "does-not-exist")})
+    assert resp.status_code == 400
+
+
+def test_config_scan_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.get("/api/config-scan/rustle")
+    assert resp.status_code == 401
+
+
+def test_config_scan_finds_nested_configs_across_roots(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    root_a = tmp_path / "a"
+    (root_a / "nested").mkdir(parents=True)
+    (root_a / "top.toml").write_text("x = 1")
+    (root_a / "nested" / "deep.toml").write_text("y = 2")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(root_a)})
+
+    resp = client.get("/api/config-scan/rustle")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "configs": sorted([str(root_a / "top.toml"), str(root_a / "nested" / "deep.toml")])
+    }
+
+
+def test_config_scan_empty_when_no_roots_configured(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/config-scan/ticktrader")
+    assert resp.status_code == 200
+    assert resp.json() == {"configs": []}
+
+
 def test_run_overview_includes_performance_market_and_latency_fields(settings, tmp_path):
     run_dir = tmp_path / "rustle-runs" / "run-1"
     run_dir.mkdir(parents=True)

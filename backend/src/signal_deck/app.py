@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .auth import SESSION_COOKIE, create_session_token, verify_session_token
 from .config import Settings
+from .config_discovery import PROJECTS, add_config_root, load_config_roots, scan_configs
 from .live import LiveIngestionManager
 from .runs import discover_all_runs
 
@@ -24,6 +25,10 @@ SSE_POLL_TIMEOUT_SECONDS = 1.0
 
 class LoginRequest(BaseModel):
     password: str
+
+
+class AddConfigRootRequest(BaseModel):
+    root: str
 
 
 def _by_key(mapping: dict) -> dict:
@@ -112,6 +117,33 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
         require_session(request)
         runs = discover_all_runs(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
         return [asdict(run) for run in runs]
+
+    def _require_known_project(project: str) -> None:
+        if project not in PROJECTS:
+            raise HTTPException(status_code=404, detail="unknown project")
+
+    @app.get("/api/config-roots/{project}")
+    def get_config_roots(project: str, request: Request) -> dict[str, list[str]]:
+        require_session(request)
+        _require_known_project(project)
+        roots = load_config_roots(settings.config_roots_file)
+        return {"roots": roots.get(project, [])}
+
+    @app.post("/api/config-roots/{project}")
+    def post_config_root(project: str, body: AddConfigRootRequest, request: Request) -> dict[str, list[str]]:
+        require_session(request)
+        _require_known_project(project)
+        if not Path(body.root).is_dir():
+            raise HTTPException(status_code=400, detail="not a directory")
+        roots = add_config_root(settings.config_roots_file, project, body.root)
+        return {"roots": roots}
+
+    @app.get("/api/config-scan/{project}")
+    def get_config_scan(project: str, request: Request) -> dict[str, list[str]]:
+        require_session(request)
+        _require_known_project(project)
+        roots = load_config_roots(settings.config_roots_file).get(project, [])
+        return {"configs": scan_configs(roots)}
 
     @app.get("/api/runs/{project}/{run_id}/overview")
     def run_overview(project: str, run_id: str, request: Request) -> dict:

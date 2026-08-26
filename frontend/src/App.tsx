@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ConfigRoots from './ConfigRoots'
 import RunComparison from './RunComparison'
 import RunList, { type Run } from './RunList'
 import RunOverview from './RunOverview'
@@ -62,6 +63,7 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [compareMode, setCompareMode] = useState(false)
   const [compareSelection, setCompareSelection] = useState<Run[]>([])
   const [comparing, setComparing] = useState<Run[] | null>(null)
+  const [showConfigRoots, setShowConfigRoots] = useState(false)
 
   function toggleCompareSelection(run: Run) {
     setCompareSelection((prev) => {
@@ -85,9 +87,14 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
     <main className="dashboard">
       <header>
         <h1>Signal Deck</h1>
-        <button onClick={handleLogout}>Log out</button>
+        <div>
+          <button onClick={() => setShowConfigRoots(true)}>Config roots</button>
+          <button onClick={handleLogout}>Log out</button>
+        </div>
       </header>
-      {comparing ? (
+      {showConfigRoots ? (
+        <ConfigRoots onBack={() => setShowConfigRoots(false)} />
+      ) : comparing ? (
         <RunComparison
           runs={comparing}
           onBack={() => {
