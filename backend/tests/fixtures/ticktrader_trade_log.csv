@@ -1,0 +1,4 @@
+timestamp,type,seen_by_strategy,best_bid,best_ask,spread,imbalance,trade_price,trade_side,matched_volume,my_bids,my_asks,position,action,pnl,unrealized_pnl
+09:00:00.100,TICK,True,100.0,100.2,0.2,0.0,,,,,,0.0,,0.0,0.0
+09:00:01.200,TRADE,True,,,,,100.1,BUY,5,,,1.0,BUY,0.0,0.0
+09:00:05.000,TRADE,True,,,,,100.3,SELL,5,,,0.0,SELL,1.0,0.0
