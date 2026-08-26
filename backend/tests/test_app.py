@@ -101,3 +101,89 @@ def test_runs_aggregates_discovered_runs(settings, tmp_path):
     assert run["project"] == "rustle"
     assert run["status"] == "live"
     assert run["pnl"] == 3.5
+
+
+def _write_run(tmp_path: Path, *, project: str, run_id: str, state: str) -> Path:
+    root_name = "rustle-runs" if project == "rustle" else "tt-runs"
+    run_dir = tmp_path / root_name / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": run_id, "run_type": "live", "state": state, "started_at": 1.0, "ended_at": None})
+    )
+    log_name = "events.jsonl" if project == "rustle" else "trade_log.csv"
+    if project == "rustle":
+        (run_dir / log_name).write_text(json.dumps({"type": "equity", "ts": 1, "equity": 7.5}) + "\n")
+    else:
+        (run_dir / log_name).write_text(
+            "timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl\n"
+        )
+    return run_dir
+
+
+def test_run_overview_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.get("/api/runs/rustle/run-1/overview")
+    assert resp.status_code == 401
+
+
+def test_run_overview_unknown_run_is_404(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/runs/rustle/nope/overview")
+    assert resp.status_code == 404
+
+
+def test_run_overview_live_run_after_a_poll_tick(settings, tmp_path):
+    _write_run(tmp_path, project="rustle", run_id="run-1", state="live")
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+
+    app = client.app
+    app.state.live_manager.poll_once()
+
+    resp = client.get("/api/runs/rustle/run-1/overview")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "live"
+    assert body["encrypted_locked"] is False
+    assert body["equity"] == [{"ts": 1, "equity": 7.5}]
+
+
+def test_run_stream_requires_live_run(settings, tmp_path):
+    _write_run(tmp_path, project="rustle", run_id="run-1", state="stopped")
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+
+    resp = client.get("/api/runs/rustle/run-1/stream")
+    assert resp.status_code == 404
+
+
+def test_run_stream_subscribes_a_live_run(settings, tmp_path):
+    _write_run(tmp_path, project="rustle", run_id="run-1", state="live")
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+
+    manager = client.app.state.live_manager
+    manager.poll_once()  # run now tracked as live; subscribe can succeed
+    assert manager.subscribe("rustle", "run-1") is not None
+
+
+def test_format_sse_delta_and_done():
+    from signal_deck.app import _format_sse
+    from signal_deck.live import Delta
+    from signal_deck.sources.base import EquityPoint, Trade
+
+    delta = Delta(
+        equity=[EquityPoint(ts=2, equity=8.5)],
+        trades=[Trade(ts=2, symbol="BTC", side="buy", price=1.0, qty=1.0)],
+    )
+    frame = _format_sse(delta)
+    assert frame.startswith("data: ")
+    assert frame.endswith("\n\n")
+    assert '"equity": 8.5' in frame
+
+    assert _format_sse(None) == "event: done\ndata: {}\n\n"

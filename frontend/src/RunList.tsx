@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 
-type RunStatus = 'live' | 'stopped' | 'crashed' | 'backtest'
+export type RunStatus = 'live' | 'stopped' | 'crashed' | 'backtest'
 
-type Run = {
+export type Run = {
   run_id: string
   project: string
   run_type: string
@@ -26,13 +26,26 @@ function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
-function RunRow({ run, now }: { run: Run; now: number }) {
+function RunRow({ run, now, onSelect }: { run: Run; now: number; onSelect: (run: Run) => void }) {
   const isBacktest = run.status === 'backtest'
   const end = run.ended_at ?? now
   const duration = end - run.started_at
 
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onSelect(run)
+    }
+  }
+
   return (
-    <li className={`run-row run-row--${run.status}`}>
+    <li
+      className={`run-row run-row--${run.status}`}
+      onClick={() => onSelect(run)}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+    >
       <span className={`pulse pulse--${run.status === 'live' ? 'live' : 'dead'}`} aria-hidden="true" />
       <span className="run-project">{run.project}</span>
       <span className={`run-badge run-badge--${run.status}`}>{run.status.toUpperCase()}</span>
@@ -52,7 +65,7 @@ function RunRow({ run, now }: { run: Run; now: number }) {
   )
 }
 
-export default function RunList() {
+export default function RunList({ onSelectRun }: { onSelectRun: (run: Run) => void }) {
   const [runs, setRuns] = useState<Run[]>([])
   const [now, setNow] = useState(() => Date.now() / 1000)
 
@@ -84,7 +97,7 @@ export default function RunList() {
   return (
     <ul className="run-list">
       {runs.map((run) => (
-        <RunRow key={`${run.project}-${run.run_id}`} run={run} now={now} />
+        <RunRow key={`${run.project}-${run.run_id}`} run={run} now={now} onSelect={onSelectRun} />
       ))}
     </ul>
   )

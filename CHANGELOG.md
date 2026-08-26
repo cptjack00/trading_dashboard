@@ -32,3 +32,21 @@
   pulse, a status badge (live/stopped/crashed/backtest), elapsed duration
   (or a real start/end date-range for backtests), and PnL — all without a
   full page reload. (#4)
+- Run detail Overview tab: clicking a run in the list opens its detail view
+  with a live-updating equity curve and recent trade tape. Backend:
+  `GET /api/runs/{project}/{run_id}/overview` returns a snapshot (from an
+  in-memory cache for completed runs, computed once since their log never
+  grows again); `GET /api/runs/{project}/{run_id}/stream` is an SSE feed of
+  equity/trade deltas for live runs only, backed by an asyncio poll loop
+  (~1s) that tails each currently-live run and fans deltas out to subscribers,
+  closing the stream when a run ends. A run whose log is detected as
+  encrypted (magic-header sniff — no key-resolution mechanism exists yet) is
+  neither polled nor parsed; the Overview shows a "🔒 encrypted — no key
+  configured" placeholder while the run's real status (e.g. LIVE) still
+  displays normally. (#5)
+
+### Fixed
+
+- `GET /api/runs` no longer 500s when a run's log is encrypted — PnL
+  computation now skips parsing (encrypted logs were previously handed
+  straight to an adapter's `parse_line`, which expects plaintext). (#5)

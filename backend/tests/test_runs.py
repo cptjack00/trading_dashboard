@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from signal_deck.runs import discover_all_runs, discover_rustle_runs, discover_ticktrader_runs
+from signal_deck.sources.base import LogSourceAdapter
 
 
 def _write_manifest(run_dir: Path, **fields) -> None:
@@ -105,6 +106,18 @@ def test_backtest_status_wins_over_state():
     assert _status(run_type="backtest", state="live") == "backtest"
     assert _status(run_type="live", state="crashed") == "crashed"
     assert _status(run_type="live", state="live") == "live"
+
+
+def test_discover_rustle_runs_with_encrypted_log_lists_run_with_zero_pnl(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\nnot-json-or-anything\n")
+
+    [run] = discover_rustle_runs(root)  # must not raise despite unparseable ciphertext
+
+    assert run.status == "live"
+    assert run.pnl == 0.0
 
 
 def test_discover_all_runs_combines_both_projects_and_ignores_unset_roots(tmp_path: Path):

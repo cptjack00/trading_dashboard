@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .sources.base import PnL
+from .sources.base import PnL, is_encrypted
 from .sources.rustle import RustleAdapter
 from .sources.ticktrader import TickTraderTradeLogAdapter
 
@@ -69,14 +69,26 @@ def _run_dirs(root: Path) -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_dir())
 
 
+def iter_manifests(root: Path) -> list[tuple[Path, dict]]:
+    """(run_dir, manifest) for every run directory under `root` with a valid
+    manifest; malformed/missing manifests are skipped, not raised."""
+    pairs = ((run_dir, _load_manifest(run_dir)) for run_dir in _run_dirs(root))
+    return [(run_dir, manifest) for run_dir, manifest in pairs if manifest is not None]
+
+
+def _pnl_or_locked(log_path: Path, adapter) -> list[PnL]:
+    # An encrypted log with no key configured is never fed to an adapter -
+    # `parse_line` expects plaintext and would raise on raw ciphertext bytes.
+    if not log_path.is_file() or is_encrypted(log_path):
+        return []
+    return adapter.tail().pnl
+
+
 def discover_rustle_runs(root: Path) -> list[RunSummary]:
     summaries = []
-    for run_dir in _run_dirs(root):
-        manifest = _load_manifest(run_dir)
-        if manifest is None:
-            continue
+    for run_dir, manifest in iter_manifests(root):
         log_path = run_dir / "events.jsonl"
-        pnl = RustleAdapter(log_path).tail().pnl if log_path.is_file() else []
+        pnl = _pnl_or_locked(log_path, RustleAdapter(log_path))
         summaries.append(
             RunSummary(
                 run_id=manifest["run_id"],
@@ -93,16 +105,10 @@ def discover_rustle_runs(root: Path) -> list[RunSummary]:
 
 def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
     summaries = []
-    for run_dir in _run_dirs(root):
-        manifest = _load_manifest(run_dir)
-        if manifest is None:
-            continue
+    for run_dir, manifest in iter_manifests(root):
         log_path = run_dir / "trade_log.csv"
-        pnl = (
-            TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", "")).tail().pnl
-            if log_path.is_file()
-            else []
-        )
+        adapter = TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
+        pnl = _pnl_or_locked(log_path, adapter)
         summaries.append(
             RunSummary(
                 run_id=manifest["run_id"],
@@ -124,3 +130,18 @@ def discover_all_runs(rustle_root: Path | None, ticktrader_root: Path | None) ->
     if ticktrader_root is not None:
         runs.extend(discover_ticktrader_runs(ticktrader_root))
     return runs
+
+
+def find_run(
+    rustle_root: Path | None, ticktrader_root: Path | None, project: str, run_id: str
+) -> tuple[Path, dict] | None:
+    """Locate a run's directory and manifest by project + run_id, for run-detail
+    endpoints that need the underlying log path rather than a `RunSummary`.
+    """
+    root = {"rustle": rustle_root, "ticktrader": ticktrader_root}.get(project)
+    if root is None:
+        return None
+    for run_dir, manifest in iter_manifests(root):
+        if manifest["run_id"] == run_id:
+            return run_dir, manifest
+    return None
