@@ -173,3 +173,20 @@ class LogSourceAdapter(ABC):
     @abstractmethod
     def parse_line(self, line: bytes, into: ParsedLog) -> None:
         """Parse one decoded, complete line and append entries to `into`."""
+
+
+def is_encrypted(path: Path) -> bool:
+    """Sniff a log file's header without tailing/parsing it.
+
+    Callers that only need to know *whether* a file is encrypted (e.g. to
+    decide whether it's safe to feed to an adapter at all, given no key
+    resolution exists yet) use this instead of constructing an adapter and
+    calling `tail()`, which would otherwise hand raw ciphertext bytes to
+    `parse_line` and blow up.
+    """
+    header = LogSourceAdapter.MAGIC_HEADER
+    try:
+        with path.open("rb") as f:
+            return f.read(len(header)) == header
+    except OSError:
+        return False

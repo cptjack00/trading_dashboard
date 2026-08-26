@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import RunList from './RunList'
+import RunList, { type Run } from './RunList'
+import RunOverview from './RunOverview'
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous'
 
@@ -52,6 +53,8 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 }
 
 function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
+  const [selectedRun, setSelectedRun] = useState<Run | null>(null)
+
   async function handleLogout() {
     await fetch('/api/logout', { method: 'POST' })
     onLoggedOut()
@@ -63,7 +66,11 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
         <h1>Signal Deck</h1>
         <button onClick={handleLogout}>Log out</button>
       </header>
-      <RunList />
+      {selectedRun ? (
+        <RunOverview run={selectedRun} onBack={() => setSelectedRun(null)} />
+      ) : (
+        <RunList onSelectRun={setSelectedRun} />
+      )}
     </main>
   )
 }
