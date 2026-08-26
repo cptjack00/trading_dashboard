@@ -1,0 +1,21 @@
+[Unit]
+Description=Signal Deck trading dashboard
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/signal-deck/backend
+EnvironmentFile=/opt/signal-deck/signal-deck.env
+ExecStart=/opt/signal-deck/backend/.venv/bin/signal-deck
+Restart=on-failure
+RestartSec=2
+User=signal-deck
+Group=signal-deck
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/signal-deck/backend
+
+[Install]
+WantedBy=multi-user.target
