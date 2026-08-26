@@ -318,6 +318,42 @@ code {
   text-transform: capitalize;
 }
 
+.run-overview-header {
+  margin-bottom: 8px;
+}
+
+.danger-button {
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
+.stop-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.new-run-label {
+  margin: 16px 0 4px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.new-run-stage--2 {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.new-run-arm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: #dc2626;
+}
+
 .run-tabs {
   display: flex;
   gap: 4px;

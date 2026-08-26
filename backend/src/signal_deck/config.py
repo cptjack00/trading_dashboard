@@ -44,6 +44,17 @@ class Settings:
             os.environ.get("SIGNAL_DECK_CONFIG_ROOTS_FILE", "config_roots.json")
         )
 
+        # #9's process-start registry and #10's durable stop-request log.
+        self.process_registry_file = Path(
+            os.environ.get("SIGNAL_DECK_PROCESS_REGISTRY_FILE", "process_registry.json")
+        )
+        self.stop_log_file = Path(os.environ.get("SIGNAL_DECK_STOP_LOG_FILE", "stop_events.log"))
+
+        # ponytail: optional like the runs dirs above - a project with no binary
+        # configured just can't launch runs from the dashboard yet.
+        self.rustle_binary = _optional_path("SIGNAL_DECK_RUSTLE_BINARY")
+        self.ticktrader_binary = _optional_path("SIGNAL_DECK_TICKTRADER_BINARY")
+
 
 def _optional_path(env_var: str) -> Path | None:
     value = os.environ.get(env_var)

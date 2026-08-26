@@ -1,9 +1,14 @@
 import json
+import os
+import signal
+import stat
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from signal_deck.app import create_app
+from signal_deck.process_control import is_pid_alive
 
 
 def make_client(settings, tmp_path: Path) -> TestClient:
@@ -309,3 +314,152 @@ def test_run_overview_includes_performance_market_and_latency_fields(settings, t
     assert body["health"] == [{"ts": 1, "component": "ws", "ok": True, "detail": None}]
     assert body["symbol_prices"]["BTC"][0]["price"] == 1.0
     assert body["channel_latency"]["ws"][0]["mean"] == 4.0
+
+
+def _fake_binary(tmp_path: Path) -> Path:
+    """A fake sleep/echo script standing in for the real trading binaries."""
+    path = tmp_path / "fake-runner.sh"
+    path.write_text("#!/bin/sh\ntrap 'exit 0' TERM\nsleep 30 &\nwait\n")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def _wait_until(predicate, timeout: float = 3.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError("condition not met before timeout")
+
+
+def test_start_run_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "backtest", "config": "x"})
+    assert resp.status_code == 401
+
+
+def test_start_run_rejects_unconfigured_project(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "backtest", "config": "x"})
+    assert resp.status_code == 400
+
+
+def test_start_run_rejects_invalid_run_type(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "bogus", "config": "x"})
+    assert resp.status_code == 400
+
+
+def test_start_run_missing_config_rejected(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(configs_dir)})
+
+    resp = client.post(
+        "/api/runs", json={"project": "rustle", "run_type": "backtest", "config": str(configs_dir / "nope.toml")}
+    )
+    assert resp.status_code == 400
+
+
+def test_start_run_rejects_config_outside_registered_roots(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    (tmp_path / "configs").mkdir()
+    outside = tmp_path / "outside" / "strategy.toml"
+    outside.parent.mkdir()
+    outside.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path / "configs")})
+
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "backtest", "config": str(outside)})
+    assert resp.status_code == 400
+    assert "registered" in resp.json()["detail"]
+
+
+def test_start_run_spawns_process_and_appears_in_run_list(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    settings.process_registry_file = tmp_path / "process_registry.json"
+    settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    config = tmp_path / "strategy.toml"
+    config.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
+
+    resp = client.post("/api/runs", json={"project": "rustle", "run_type": "live", "config": str(config)})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project"] == "rustle"
+    assert body["status"] == "live"
+
+    runs_resp = client.get("/api/runs")
+    [run] = runs_resp.json()
+    assert run["run_id"] == body["run_id"]
+
+    pid = client.app.state.process_registry._procs[f"rustle:{body['run_id']}"].pid
+    try:
+        client.post(f"/api/runs/rustle/{body['run_id']}/stop")
+        _wait_until(lambda: client.app.state.process_registry.reconcile() or not is_pid_alive(pid))
+    finally:
+        if is_pid_alive(pid):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_stop_run_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.post("/api/runs/rustle/run-1/stop")
+    assert resp.status_code == 401
+
+
+def test_stop_run_unknown_run_is_404(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.post("/api/runs/rustle/nope/stop")
+    assert resp.status_code == 404
+
+
+def test_stop_run_sends_sigterm_and_appears_stopped_after_reconcile(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_binary = _fake_binary(tmp_path)
+    settings.process_registry_file = tmp_path / "process_registry.json"
+    settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    config = tmp_path / "strategy.toml"
+    config.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
+    started = client.post("/api/runs", json={"project": "rustle", "run_type": "live", "config": str(config)}).json()
+    run_id = started["run_id"]
+    pid = client.app.state.process_registry._procs[f"rustle:{run_id}"].pid
+
+    resp = client.post(f"/api/runs/rustle/{run_id}/stop")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+    def stopped() -> bool:
+        runs = {r["run_id"]: r for r in client.get("/api/runs").json()}
+        return runs[run_id]["status"] == "stopped"
+
+    try:
+        _wait_until(stopped)
+    finally:
+        if is_pid_alive(pid):
+            os.kill(pid, signal.SIGKILL)

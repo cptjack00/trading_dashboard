@@ -16,6 +16,7 @@ from .auth import SESSION_COOKIE, create_session_token, verify_session_token
 from .config import Settings
 from .config_discovery import PROJECTS, add_config_root, load_config_roots, scan_configs
 from .live import LiveIngestionManager
+from .process_control import ProcessRegistry, RunNotFoundError
 from .runs import discover_all_runs
 
 DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -29,6 +30,12 @@ class LoginRequest(BaseModel):
 
 class AddConfigRootRequest(BaseModel):
     root: str
+
+
+class StartRunRequest(BaseModel):
+    project: str
+    run_type: str
+    config: str
 
 
 def _by_key(mapping: dict) -> dict:
@@ -73,6 +80,7 @@ def _overview_json(overview) -> dict:
 
 def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIST) -> FastAPI:
     live_manager = LiveIngestionManager(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
+    process_registry = ProcessRegistry(settings.process_registry_file, settings.stop_log_file)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -82,6 +90,7 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
 
     app = FastAPI(title="Signal Deck", lifespan=lifespan)
     app.state.live_manager = live_manager
+    app.state.process_registry = process_registry
 
     @app.post("/api/login")
     def login(body: LoginRequest, response: Response) -> dict[str, bool]:
@@ -115,12 +124,60 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
     @app.get("/api/runs")
     def list_runs(request: Request) -> list[dict]:
         require_session(request)
+        # Reconciles tracked runs' liveness on the same ~5s cadence the frontend
+        # already polls this endpoint at, rather than running a second background loop.
+        process_registry.reconcile()
         runs = discover_all_runs(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
         return [asdict(run) for run in runs]
 
     def _require_known_project(project: str) -> None:
         if project not in PROJECTS:
             raise HTTPException(status_code=404, detail="unknown project")
+
+    _RUNS_ROOTS = {"rustle": lambda: settings.rustle_runs_dir, "ticktrader": lambda: settings.ticktrader_runs_dir}
+    _BINARIES = {"rustle": lambda: settings.rustle_binary, "ticktrader": lambda: settings.ticktrader_binary}
+
+    def _config_is_registered(project: str, config_path: str) -> bool:
+        # A launchable config must come from one of the project's own scanned
+        # roots (#8) - otherwise `/api/runs` would happily Popen the configured
+        # trading binary against an arbitrary path on disk just because an
+        # authenticated session named it.
+        roots = load_config_roots(settings.config_roots_file).get(project, [])
+        resolved = Path(config_path).resolve()
+        return any(resolved.is_relative_to(Path(root).resolve()) for root in roots)
+
+    @app.post("/api/runs")
+    def start_run(body: StartRunRequest, request: Request) -> dict:
+        require_session(request)
+        _require_known_project(body.project)
+        if body.run_type not in ("live", "backtest"):
+            raise HTTPException(status_code=400, detail="run_type must be 'live' or 'backtest'")
+        runs_root = _RUNS_ROOTS[body.project]()
+        binary = _BINARIES[body.project]()
+        if runs_root is None or binary is None:
+            raise HTTPException(status_code=400, detail=f"{body.project} is not configured to launch runs")
+        if not _config_is_registered(body.project, body.config):
+            raise HTTPException(status_code=400, detail="config is not under a registered config root")
+        try:
+            return process_registry.start_run(
+                project=body.project,
+                run_type=body.run_type,
+                config_path=body.config,
+                binary=str(binary),
+                runs_root=runs_root,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=400, detail="config file not found")
+
+    @app.post("/api/runs/{project}/{run_id}/stop")
+    def stop_run(project: str, run_id: str, request: Request) -> dict[str, bool]:
+        require_session(request)
+        _require_known_project(project)
+        try:
+            process_registry.stop_run(project=project, run_id=run_id)
+        except RunNotFoundError:
+            raise HTTPException(status_code=404, detail="run not found")
+        return {"ok": True}
 
     @app.get("/api/config-roots/{project}")
     def get_config_roots(project: str, request: Request) -> dict[str, list[str]]:

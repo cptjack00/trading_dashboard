@@ -119,6 +119,51 @@ function EquityCurve({ points }: { points: EquityPoint[] }) {
   )
 }
 
+function StopButton({ project, runId }: { project: string; runId: string }) {
+  const [confirming, setConfirming] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [stopped, setStopped] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setStopping(true)
+    setError(null)
+    const res = await fetch(`/api/runs/${project}/${runId}/stop`, { method: 'POST' })
+    setStopping(false)
+    if (res.ok) {
+      setStopped(true)
+    } else {
+      const body = await res.json().catch(() => null)
+      setError(body?.detail ?? 'Could not stop run')
+    }
+  }
+
+  if (stopped) {
+    return <span className="stop-confirm">Stop requested.</span>
+  }
+
+  if (!confirming) {
+    return (
+      <button className="danger-button" onClick={() => setConfirming(true)}>
+        Stop run
+      </button>
+    )
+  }
+
+  return (
+    <span className="stop-confirm">
+      Stop this run?
+      <button className="danger-button" disabled={stopping} onClick={handleConfirm}>
+        Confirm stop
+      </button>
+      <button disabled={stopping} onClick={() => setConfirming(false)}>
+        Cancel
+      </button>
+      {error && <span role="alert">{error}</span>}
+    </span>
+  )
+}
+
 function TradeTape({ trades }: { trades: TradeRow[] }) {
   if (trades.length === 0) {
     return <p className="overview-empty">No trades yet.</p>
@@ -236,6 +281,7 @@ export default function RunOverview({ run, onBack }: { run: Run; onBack: () => v
           {run.project} / {run.run_id}
         </h2>
         <span className={`run-badge run-badge--${status}`}>{status.toUpperCase()}</span>
+        {status === 'live' && <StopButton project={run.project} runId={run.run_id} />}
       </header>
 
       <nav className="run-tabs">

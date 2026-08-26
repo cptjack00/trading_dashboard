@@ -78,6 +78,40 @@
   recursive `**/*.toml` scan of them on demand. A "Config roots" panel in the
   UI lets an operator add a new root directory per project and preview a
   scan — no upload, catalog, or validation wizard. (#8)
+- New Run flow: a two-stage "New run" panel — Stage 1 picks Project → Run
+  type → Config (from #8's scan list), Stage 2 (revealed once a config is
+  picked) requires an explicit arm toggle before Start is enabled for LIVE,
+  or shows a plain, always-enabled "Start backtest" button with a "reads
+  historical data only" note for BACKTEST. Backend: `POST /api/runs`
+  (`process_control.py`'s `ProcessRegistry.start_run`) rejects any `config`
+  path that isn't under one of the project's own registered scan roots
+  (#8), then `subprocess.Popen`s the project's configured binary
+  (`SIGNAL_DECK_RUSTLE_BINARY` / `SIGNAL_DECK_TICKTRADER_BINARY`) with
+  `--config <path>`, redirects stdout/stderr to a per-run log file, writes
+  the run's `run.json` manifest immediately (so it shows up in the existing
+  run list within one poll, no page reload), and tracks PID/start time in a
+  registry persisted to `SIGNAL_DECK_PROCESS_REGISTRY_FILE` that survives a
+  dashboard restart. `GET /api/runs` now also reconciles tracked runs'
+  liveness (PID polling) on the same 5s cadence the frontend already polls
+  it at, updating a finished run's manifest to `stopped` or `crashed`. (#9)
+- Stop control: a "Stop run" button on a live run's detail view, with an
+  inline "Stop this run? [Confirm stop] [Cancel]" step before it fires.
+  Backend: `POST /api/runs/{project}/{run_id}/stop` sends **SIGTERM** (not
+  SIGINT — see ADR-0002) to the tracked PID, deduplicated so a repeated stop
+  request against the same run sends at most one SIGTERM regardless of
+  timing, while a durable "operator stopped run `<name>` at `<time>`" record
+  (`SIGNAL_DECK_STOP_LOG_FILE`) is still appended on every request for
+  accountability. No halt/cancel/flatten commands, and none of the old
+  Control channel's ceremony (`CommandBinding`, proposer/approver, audited
+  journal), are exposed or rebuilt. (#10)
+- Two owed ADRs and this repo's own `CONTEXT.md`: `docs/adr/0001-...` covers
+  the encrypted-log tiering/framing/detection design (per-line AEAD framing
+  over whole-file or field-level, a self-describing header over
+  config-driven detection); `docs/adr/0002-...` covers SIGTERM-over-SIGINT
+  for stop, grounded in `tt-live-runner`'s `ShutdownCoordinator` escalation
+  behavior. `CONTEXT.md` re-anchors "Operator console," "Run halt," "Control
+  channel," and "Operator intervention" from rustle's own `CONTEXT.md`, now
+  that tt-console is superseded. (#11)
 
 ### Fixed
 
