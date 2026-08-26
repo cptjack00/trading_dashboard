@@ -59,6 +59,18 @@
   a `live_tracked` field from the Overview response to decide whether to open
   the SSE stream, rather than re-deriving that from project name. The Latency
   tab is hidden entirely for backtest runs. (#6)
+- Comparison view: a "Compare runs" toggle on the run list lets an operator
+  select 2-4 runs, in any mix of project and status, and view them side by
+  side — reusing the existing per-run `overview` endpoint rather than adding
+  a new one. Shows a table of PnL/fills/win-rate per run (with a PnL delta
+  column when exactly 2 runs are selected), an overlaid cumulative-PnL chart
+  normalized by run-progress fraction (index/length, not wall-clock time or
+  point count, so runs of different lengths still line up start-to-finish),
+  and grouped per-slot PnL/fill bar charts. Per-slot bars align slots
+  positionally (1st vs. 1st, 2nd vs. 2nd, ...) across runs rather than by
+  slot name, since two runs can use unrelated slot identifiers even when
+  their counts match; when slot counts differ, a plain fallback message
+  replaces the charts instead of a misleading alignment. (#7)
 
 ### Fixed
 

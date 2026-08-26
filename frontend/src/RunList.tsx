@@ -26,7 +26,19 @@ function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
-function RunRow({ run, now, onSelect }: { run: Run; now: number; onSelect: (run: Run) => void }) {
+function RunRow({
+  run,
+  now,
+  onSelect,
+  selected,
+  showCheckbox,
+}: {
+  run: Run
+  now: number
+  onSelect: (run: Run) => void
+  selected?: boolean
+  showCheckbox?: boolean
+}) {
   const isBacktest = run.status === 'backtest'
   const end = run.ended_at ?? now
   const duration = end - run.started_at
@@ -40,12 +52,17 @@ function RunRow({ run, now, onSelect }: { run: Run; now: number; onSelect: (run:
 
   return (
     <li
-      className={`run-row run-row--${run.status}`}
+      className={`run-row run-row--${run.status}${selected ? ' run-row--selected' : ''}`}
       onClick={() => onSelect(run)}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
     >
+      {showCheckbox && (
+        <span className="run-checkbox" aria-hidden="true">
+          {selected ? '☑' : '☐'}
+        </span>
+      )}
       <span className={`pulse pulse--${run.status === 'live' ? 'live' : 'dead'}`} aria-hidden="true" />
       <span className="run-project">{run.project}</span>
       <span className={`run-badge run-badge--${run.status}`}>{run.status.toUpperCase()}</span>
@@ -65,7 +82,17 @@ function RunRow({ run, now, onSelect }: { run: Run; now: number; onSelect: (run:
   )
 }
 
-export default function RunList({ onSelectRun }: { onSelectRun: (run: Run) => void }) {
+export default function RunList({
+  onSelectRun,
+  compareMode = false,
+  selectedKeys,
+  onToggleCompare,
+}: {
+  onSelectRun: (run: Run) => void
+  compareMode?: boolean
+  selectedKeys?: Set<string>
+  onToggleCompare?: (run: Run) => void
+}) {
   const [runs, setRuns] = useState<Run[]>([])
   const [now, setNow] = useState(() => Date.now() / 1000)
 
@@ -96,9 +123,19 @@ export default function RunList({ onSelectRun }: { onSelectRun: (run: Run) => vo
 
   return (
     <ul className="run-list">
-      {runs.map((run) => (
-        <RunRow key={`${run.project}-${run.run_id}`} run={run} now={now} onSelect={onSelectRun} />
-      ))}
+      {runs.map((run) => {
+        const key = `${run.project}-${run.run_id}`
+        return (
+          <RunRow
+            key={key}
+            run={run}
+            now={now}
+            onSelect={compareMode ? onToggleCompare! : onSelectRun}
+            selected={compareMode && (selectedKeys?.has(key) ?? false)}
+            showCheckbox={compareMode}
+          />
+        )
+      })}
     </ul>
   )
 }
