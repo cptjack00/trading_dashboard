@@ -1,0 +1,15 @@
+.omc/
+*.csv
+*.txt
+data/
+input*/
+logs/
+
+.claude/
+.vscode/
+
+__pycache__/
+__pytest_cache__/
+cache/
+
+checkpoints/
