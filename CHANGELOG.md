@@ -44,6 +44,21 @@
   neither polled nor parsed; the Overview shows a "🔒 encrypted — no key
   configured" placeholder while the run's real status (e.g. LIVE) still
   displays normally. (#5)
+- Run detail Performance, Market, and Latency tabs, extending #5's ingestion
+  pipeline: `GET /api/runs/{project}/{run_id}/overview` and the SSE stream now
+  also carry per-slot PnL/win-rate/fill-count (Performance, plus an overall
+  total), per-symbol matched price movement with buy/sell trade markers
+  (Market), per-component health status, and per-channel ws/api latency
+  mean/p99/p999 with an uncapped trend history spanning the run's lifetime
+  (Latency). TickTrader-para's latency channels are tailed from their own
+  `{channel}_latency.jsonl` files, so the Latency tab (and health) keeps
+  working even when a run's trade log is encrypted-locked; rustle interleaves
+  everything in one `events.jsonl`, so an encrypted rustle run has no
+  separable latency/health to show. Performance and Market show the same
+  "🔒 encrypted" placeholder as Overview when locked; the frontend now reads
+  a `live_tracked` field from the Overview response to decide whether to open
+  the SSE stream, rather than re-deriving that from project name. The Latency
+  tab is hidden entirely for backtest runs. (#6)
 
 ### Fixed
 

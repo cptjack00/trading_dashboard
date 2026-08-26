@@ -87,6 +87,11 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
                 PnL(ts=ts, slot=slot, realized=float(pnl_str), unrealized=float(row.get("unrealized_pnl") or 0.0))
             )
 
+        # ponytail: trade_log.csv carries no independent quote/tick stream, only
+        # TRADE/FILL rows - so every matched-price point this adapter emits also
+        # carries a trade marker. A Market-tab "price movement" line built from
+        # this adapter is 1:1 with its own trade markers, not movement between
+        # fills; add a quote-tick handler here if trade_log.csv ever gains one.
         trade_price = row.get("trade_price")
         if row.get("type") in ("TRADE", "FILL") and trade_price:
             qty = float(row.get("matched_volume") or 0.0)

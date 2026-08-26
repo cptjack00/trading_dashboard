@@ -26,11 +26,25 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _by_key(mapping: dict) -> dict:
+    """Serialize a `{key: [dataclass, ...]}` field (symbol_prices, channel_latency)."""
+    return {k: [asdict(v) for v in values] for k, values in mapping.items()}
+
+
 def _format_sse(delta) -> str:
     """One SSE frame for a `Delta`, or the closing frame for `None` (run ended)."""
     if delta is None:
         return "event: done\ndata: {}\n\n"
-    payload = {"equity": [asdict(p) for p in delta.equity], "trades": [asdict(t) for t in delta.trades]}
+    payload = {
+        "equity": [asdict(p) for p in delta.equity],
+        "trades": [asdict(t) for t in delta.trades],
+        "pnl": [asdict(p) for p in delta.pnl],
+        "win_rates": [asdict(w) for w in delta.win_rates],
+        "fills": [asdict(f) for f in delta.fills],
+        "health": [asdict(h) for h in delta.health],
+        "symbol_prices": _by_key(delta.symbol_prices),
+        "channel_latency": _by_key(delta.channel_latency),
+    }
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -40,8 +54,15 @@ def _overview_json(overview) -> dict:
         "project": overview.project,
         "status": overview.status,
         "encrypted_locked": overview.encrypted_locked,
+        "live_tracked": overview.live_tracked,
         "equity": [asdict(p) for p in overview.equity],
         "trades": [asdict(t) for t in overview.trades],
+        "pnl": [asdict(p) for p in overview.pnl],
+        "win_rates": [asdict(w) for w in overview.win_rates],
+        "fills": [asdict(f) for f in overview.fills],
+        "health": [asdict(h) for h in overview.health],
+        "symbol_prices": _by_key(overview.symbol_prices),
+        "channel_latency": _by_key(overview.channel_latency),
     }
 
 
