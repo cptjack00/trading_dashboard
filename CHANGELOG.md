@@ -23,3 +23,12 @@
   across strategy versions) for trades, matched prices, and PnL; hand
   `TickTraderLatencyAdapter` a `data_latency.jsonl`/`api_latency.jsonl` and
   a channel name and it emits a running mean/p99/p999 per new sample. (#3)
+- Unified run list: `GET /api/runs` discovers runs for both projects by
+  scanning a configured root directory per project (`SIGNAL_DECK_RUSTLE_RUNS_DIR`
+  / `SIGNAL_DECK_TICKTRADER_RUNS_DIR`), one subdirectory per run holding a
+  `run.json` manifest plus that project's log files, and totals each run's
+  latest per-slot PnL via the shared adapters. The run list UI polls this
+  endpoint every 5s and shows, per run: project, a live/dead heartbeat
+  pulse, a status badge (live/stopped/crashed/backtest), elapsed duration
+  (or a real start/end date-range for backtests), and PnL — all without a
+  full page reload. (#4)

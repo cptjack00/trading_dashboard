@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 
 from .auth import SESSION_COOKIE, create_session_token, verify_session_token
 from .config import Settings
+from .runs import discover_all_runs
 
 DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
@@ -39,12 +41,21 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
         response.delete_cookie(SESSION_COOKIE)
         return {"ok": True}
 
-    @app.get("/api/session")
-    def session_status(request: Request) -> dict[str, bool]:
+    def require_session(request: Request) -> None:
         token = request.cookies.get(SESSION_COOKIE)
         if not token or not verify_session_token(token, settings.secret):
             raise HTTPException(status_code=401, detail="not authenticated")
+
+    @app.get("/api/session")
+    def session_status(request: Request) -> dict[str, bool]:
+        require_session(request)
         return {"authenticated": True}
+
+    @app.get("/api/runs")
+    def list_runs(request: Request) -> list[dict]:
+        require_session(request)
+        runs = discover_all_runs(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
+        return [asdict(run) for run in runs]
 
     if frontend_dist.is_dir():
         app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
