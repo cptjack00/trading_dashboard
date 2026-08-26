@@ -21,3 +21,6 @@ backend/.pytest_cache/
 # local secrets
 *.env
 !*.env.example
+
+# synthetic test fixtures are exempt from the real-log-data exclusions above
+!backend/tests/fixtures/*.csv

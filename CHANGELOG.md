@@ -17,3 +17,9 @@
   auto-detects a magic header for future per-line AEAD decryption
   (unimplemented). `sources/rustle.py` adapts rustle's JSONL trade/latency
   logs onto this model. (#2)
+- `sources/ticktrader.py` adapts TickTrader-para's logs onto the shared
+  model: `TickTraderTradeLogAdapter` reads a per-slot `trade_log.csv`
+  (columns looked up by header name, tolerant of column set/order changes
+  across strategy versions) for trades, matched prices, and PnL; hand
+  `TickTraderLatencyAdapter` a `data_latency.jsonl`/`api_latency.jsonl` and
+  a channel name and it emits a running mean/p99/p999 per new sample. (#3)
