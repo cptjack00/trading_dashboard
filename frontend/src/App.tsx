@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
+import RunComparison from './RunComparison'
 import RunList, { type Run } from './RunList'
 import RunOverview from './RunOverview'
+
+function runKey(run: Run): string {
+  return `${run.project}-${run.run_id}`
+}
 
 type AuthState = 'checking' | 'authenticated' | 'anonymous'
 
@@ -54,6 +59,22 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 
 function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [selectedRun, setSelectedRun] = useState<Run | null>(null)
+  const [compareMode, setCompareMode] = useState(false)
+  const [compareSelection, setCompareSelection] = useState<Run[]>([])
+  const [comparing, setComparing] = useState<Run[] | null>(null)
+
+  function toggleCompareSelection(run: Run) {
+    setCompareSelection((prev) => {
+      if (prev.some((r) => runKey(r) === runKey(run))) return prev.filter((r) => runKey(r) !== runKey(run))
+      if (prev.length >= 4) return prev
+      return [...prev, run]
+    })
+  }
+
+  function exitCompareMode() {
+    setCompareMode(false)
+    setCompareSelection([])
+  }
 
   async function handleLogout() {
     await fetch('/api/logout', { method: 'POST' })
@@ -66,10 +87,38 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
         <h1>Signal Deck</h1>
         <button onClick={handleLogout}>Log out</button>
       </header>
-      {selectedRun ? (
+      {comparing ? (
+        <RunComparison
+          runs={comparing}
+          onBack={() => {
+            setComparing(null)
+            exitCompareMode()
+          }}
+        />
+      ) : selectedRun ? (
         <RunOverview run={selectedRun} onBack={() => setSelectedRun(null)} />
       ) : (
-        <RunList onSelectRun={setSelectedRun} />
+        <>
+          <div className="compare-bar">
+            {compareMode ? (
+              <>
+                <span>{compareSelection.length} of 2–4 runs selected</span>
+                <button disabled={compareSelection.length < 2} onClick={() => setComparing(compareSelection)}>
+                  Compare
+                </button>
+                <button onClick={exitCompareMode}>Cancel</button>
+              </>
+            ) : (
+              <button onClick={() => setCompareMode(true)}>Compare runs</button>
+            )}
+          </div>
+          <RunList
+            onSelectRun={setSelectedRun}
+            compareMode={compareMode}
+            selectedKeys={new Set(compareSelection.map(runKey))}
+            onToggleCompare={toggleCompareSelection}
+          />
+        </>
       )}
     </main>
   )
