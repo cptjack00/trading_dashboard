@@ -17,6 +17,7 @@ checkpoints/
 # backend
 backend/.venv/
 backend/.pytest_cache/
+backend/config_roots.json
 
 # local secrets
 *.env

@@ -71,6 +71,13 @@
   slot name, since two runs can use unrelated slot identifiers even when
   their counts match; when slot counts differ, a plain fallback message
   replaces the charts instead of a misleading alignment. (#7)
+- Config discovery, the backend/UI groundwork for the New Run flow (#9): a
+  local JSON settings store (`SIGNAL_DECK_CONFIG_ROOTS_FILE`) holds a list of
+  root directories to scan per project, with `GET`/`POST /api/config-roots/{project}`
+  to read and add roots and `GET /api/config-scan/{project}` doing a
+  recursive `**/*.toml` scan of them on demand. A "Config roots" panel in the
+  UI lets an operator add a new root directory per project and preview a
+  scan — no upload, catalog, or validation wizard. (#8)
 
 ### Fixed
 

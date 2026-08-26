@@ -38,6 +38,12 @@ class Settings:
         self.rustle_runs_dir = _optional_path("SIGNAL_DECK_RUSTLE_RUNS_DIR")
         self.ticktrader_runs_dir = _optional_path("SIGNAL_DECK_TICKTRADER_RUNS_DIR")
 
+        # Local settings store for #8's config-root scan list. Relative by
+        # default so it lands in the systemd unit's writable WorkingDirectory.
+        self.config_roots_file = Path(
+            os.environ.get("SIGNAL_DECK_CONFIG_ROOTS_FILE", "config_roots.json")
+        )
+
 
 def _optional_path(env_var: str) -> Path | None:
     value = os.environ.get(env_var)
