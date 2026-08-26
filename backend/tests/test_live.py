@@ -133,6 +133,174 @@ def test_get_overview_unknown_run_returns_none(tmp_path: Path):
     assert manager.get_overview("rustle", "nope") is None
 
 
+def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_text(
+        _rustle_events(
+            {"type": "pnl", "ts": 1, "slot": "s1", "realized": 1.0, "unrealized": 0.5},
+            {"type": "winrate", "ts": 1, "slot": "s1", "wins": 3, "losses": 1},
+            {"type": "fill", "ts": 1, "slot": "s1", "count": 2},
+            {"type": "trade", "ts": 1, "symbol": "BTC", "side": "buy", "price": 10.0, "qty": 1.0, "slot": "s1"},
+            {"type": "latency", "ts": 1, "channel": "ws", "mean": 5.0, "p99": 9.0, "p999": 12.0},
+        )
+    )
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    [pnl] = overview.pnl
+    assert (pnl.slot, pnl.realized, pnl.unrealized) == ("s1", 1.0, 0.5)
+    [win_rate] = overview.win_rates
+    assert (win_rate.wins, win_rate.losses) == (3, 1)
+    [fill] = overview.fills
+    assert fill.count == 2
+    prices = overview.symbol_prices["BTC"]
+    assert len(prices) == 1 and prices[0].trade.side == "buy"
+    assert overview.channel_latency["ws"][0].mean == 5.0
+
+    # A second fill for the same slot accumulates rather than replaces.
+    with (run_dir / "events.jsonl").open("a") as f:
+        f.write(json.dumps({"type": "fill", "ts": 2, "slot": "s1", "count": 3}) + "\n")
+        f.write(json.dumps({"type": "pnl", "ts": 2, "slot": "s1", "realized": 4.0, "unrealized": 0.0}) + "\n")
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    [fill] = overview.fills
+    assert fill.count == 5  # 2 + 3, summed
+    [pnl] = overview.pnl
+    assert pnl.realized == 4.0  # latest wins, not summed
+
+
+def test_health_and_live_tracked_flow_for_live_rustle_run(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_text(
+        _rustle_events({"type": "health", "ts": 1, "component": "ws", "ok": True, "detail": None})
+    )
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert overview.live_tracked is True
+    [health] = overview.health
+    assert (health.component, health.ok) == ("ws", True)
+
+    # A later sample for the same component replaces, not accumulates.
+    with (run_dir / "events.jsonl").open("a") as f:
+        f.write(json.dumps({"type": "health", "ts": 2, "component": "ws", "ok": False, "detail": "timeout"}) + "\n")
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    [health] = overview.health
+    assert (health.ok, health.detail) == (False, "timeout")
+
+
+def test_live_tracked_is_false_for_completed_runs(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="stopped", started_at=1.0, ended_at=5.0)
+    (run_dir / "events.jsonl").write_text(_rustle_events({"type": "equity", "ts": 1, "equity": 1.0}))
+
+    manager = LiveIngestionManager(root, None)
+    overview = manager.get_overview("rustle", "run-1")
+    assert overview.live_tracked is False
+
+
+def test_live_tracked_is_false_for_a_live_run_before_the_first_poll_tick(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_text(_rustle_events({"type": "equity", "ts": 1, "equity": 1.0}))
+
+    manager = LiveIngestionManager(root, None)
+    overview = manager.get_overview("rustle", "run-1")  # no poll_once() yet - fetched via the on-demand path
+    assert overview.status == "live"
+    assert overview.live_tracked is False  # not actually subscribable until a poll tick registers it
+
+
+def test_latency_history_is_not_truncated(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_text("")
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    with (run_dir / "events.jsonl").open("a") as f:
+        for i in range(600):
+            f.write(json.dumps({"type": "latency", "ts": i, "channel": "ws", "mean": 1.0, "p99": 2.0, "p999": 3.0}) + "\n")
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert len(overview.channel_latency["ws"]) == 600  # full run lifetime, not capped at 500
+
+
+def test_encrypted_rustle_run_has_no_latency_data(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "events.jsonl").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\ngarbage\n")
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert overview.encrypted_locked is True
+    assert overview.channel_latency == {}  # rustle has no separable latency stream
+
+
+def test_ticktrader_encrypted_trade_log_still_streams_latency(tmp_path: Path):
+    root = tmp_path / "tt-runs"
+    run_dir = root / "run-2"
+    _write_manifest(run_dir, run_id="run-2", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "trade_log.csv").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\ngarbage\n")
+    (run_dir / "api_latency.jsonl").write_text(
+        json.dumps({"ts": "2026-01-01T00:00:00+00:00", "duration_ms": 12.0}) + "\n"
+    )
+
+    manager = LiveIngestionManager(None, root)
+    manager.poll_once()
+
+    overview = manager.get_overview("ticktrader", "run-2")
+    assert overview.encrypted_locked is True
+    assert overview.trades == []
+    assert overview.pnl == []
+    assert overview.channel_latency["api"][0].mean == 12.0
+
+    queue = manager.subscribe("ticktrader", "run-2")
+    assert queue is not None  # still live-tracked despite the encrypted trade log
+
+    with (run_dir / "api_latency.jsonl").open("a") as f:
+        f.write(json.dumps({"ts": "2026-01-01T00:00:01+00:00", "duration_ms": 20.0}) + "\n")
+    manager.poll_once()
+
+    delta = queue.get_nowait()
+    assert delta.channel_latency["api"][0].mean == 16.0  # running mean of 12, 20
+    assert delta.trades == []
+
+
+def test_ticktrader_completed_run_reads_latency_regardless_of_trade_log_encryption(tmp_path: Path):
+    root = tmp_path / "tt-runs"
+    run_dir = root / "run-3"
+    _write_manifest(run_dir, run_id="run-3", run_type="live", state="stopped", started_at=1.0, ended_at=5.0)
+    (run_dir / "trade_log.csv").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\ngarbage\n")
+    (run_dir / "data_latency.jsonl").write_text(
+        json.dumps({"ts": "2026-01-01T00:00:00+00:00", "duration_ms": 3.0}) + "\n"
+    )
+
+    manager = LiveIngestionManager(None, root)
+    overview = manager.get_overview("ticktrader", "run-3")
+
+    assert overview.encrypted_locked is True
+    assert overview.channel_latency["data"][0].mean == 3.0
+
+
 def test_ticktrader_live_run_uses_symbol_from_manifest(tmp_path: Path):
     root = tmp_path / "tt-runs"
     run_dir = root / "run-2"

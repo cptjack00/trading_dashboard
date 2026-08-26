@@ -175,15 +175,57 @@ def test_run_stream_subscribes_a_live_run(settings, tmp_path):
 def test_format_sse_delta_and_done():
     from signal_deck.app import _format_sse
     from signal_deck.live import Delta
-    from signal_deck.sources.base import EquityPoint, Trade
+    from signal_deck.sources.base import EquityPoint, LatencySample, Trade
 
     delta = Delta(
         equity=[EquityPoint(ts=2, equity=8.5)],
         trades=[Trade(ts=2, symbol="BTC", side="buy", price=1.0, qty=1.0)],
+        channel_latency={"api": [LatencySample(ts=2, mean=1.0, p99=2.0, p999=3.0)]},
     )
     frame = _format_sse(delta)
     assert frame.startswith("data: ")
     assert frame.endswith("\n\n")
     assert '"equity": 8.5' in frame
+    assert '"api"' in frame
 
     assert _format_sse(None) == "event: done\ndata: {}\n\n"
+
+
+def test_run_overview_includes_performance_market_and_latency_fields(settings, tmp_path):
+    run_dir = tmp_path / "rustle-runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {"run_id": "run-1", "run_type": "live", "state": "live", "started_at": 1.0, "ended_at": None}
+        )
+    )
+    (run_dir / "events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "pnl", "ts": 1, "slot": "s1", "realized": 2.0, "unrealized": 0.0}),
+                json.dumps({"type": "winrate", "ts": 1, "slot": "s1", "wins": 1, "losses": 0}),
+                json.dumps({"type": "fill", "ts": 1, "slot": "s1", "count": 1}),
+                json.dumps(
+                    {"type": "trade", "ts": 1, "symbol": "BTC", "side": "buy", "price": 1.0, "qty": 1.0, "slot": "s1"}
+                ),
+                json.dumps({"type": "latency", "ts": 1, "channel": "ws", "mean": 4.0, "p99": 6.0, "p999": 8.0}),
+                json.dumps({"type": "health", "ts": 1, "component": "ws", "ok": True, "detail": None}),
+            ]
+        )
+        + "\n"
+    )
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.app.state.live_manager.poll_once()
+
+    resp = client.get("/api/runs/rustle/run-1/overview")
+    body = resp.json()
+
+    assert body["live_tracked"] is True
+    assert body["pnl"] == [{"ts": 1, "slot": "s1", "realized": 2.0, "unrealized": 0.0}]
+    assert body["win_rates"] == [{"ts": 1, "slot": "s1", "wins": 1, "losses": 0}]
+    assert body["fills"] == [{"ts": 1, "slot": "s1", "count": 1}]
+    assert body["health"] == [{"ts": 1, "component": "ws", "ok": True, "detail": None}]
+    assert body["symbol_prices"]["BTC"][0]["price"] == 1.0
+    assert body["channel_latency"]["ws"][0]["mean"] == 4.0
