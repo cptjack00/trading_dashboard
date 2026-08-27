@@ -249,3 +249,13 @@
   one-second time buckets (keep the latest point per bucket): bounded size
   (a trading day is tens of thousands of buckets, not hundreds of thousands
   of raw rows) that still spans the run's entire lifetime.
+- The frontend re-introduced the same fixed-count equity cap on the client
+  side (`RunOverview.tsx` sliced to the last 500 points on every SSE delta),
+  undoing the backend's time-bucketed retention the moment a live run's
+  first update arrived - only a run viewed *after* it ended (never receiving
+  a delta) actually showed its full history. The frontend now buckets by the
+  same one-second window as `live.py`. Also: `EventSource` auto-retries
+  forever by default and can't tell a 404 (the run ended in the race between
+  the initial `/overview` fetch and the `/stream` connection opening, two
+  separate requests) from a transient blip - it now closes outright on any
+  stream error instead of silently retrying.

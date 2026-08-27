@@ -56,7 +56,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'latency', label: 'Latency' },
 ]
 
-const EQUITY_LIMIT = 500
+const EQUITY_BUCKET_SECONDS = 1 // matches live.py's EQUITY_BUCKET_SECONDS
 const TRADE_LIMIT = 50
 const PRICE_LIMIT = 500
 const FILLS_HISTORY_LIMIT = 500 // matches live.py's FILLS_HISTORY_LIMIT
@@ -96,6 +96,16 @@ function mergeUncapped<T>(current: Record<string, T[]>, incoming: Record<string,
     next[key] = [...(next[key] ?? []), ...incoming[key]]
   }
   return next
+}
+
+// Mirrors live.py's `_bucket_equity`: keep the latest point per one-second
+// bucket instead of a fixed-count slice, so a live-streaming run's equity
+// curve keeps spanning its whole lifetime instead of collapsing back down to
+// a recent window the moment any SSE delta arrives.
+function bucketEquity(points: EquityPoint[]): EquityPoint[] {
+  const byBucket = new Map<number, EquityPoint>()
+  for (const p of points) byBucket.set(Math.floor(p.ts / EQUITY_BUCKET_SECONDS), p)
+  return [...byBucket.entries()].sort((a, b) => a[0] - b[0]).map(([, p]) => p)
 }
 
 function EquityCurve({ points }: { points: EquityPoint[] }) {
@@ -259,7 +269,7 @@ export default function RunOverview({ run }: { run: Run }) {
         prev
           ? {
               ...prev,
-              equity: [...prev.equity, ...delta.equity].slice(-EQUITY_LIMIT),
+              equity: bucketEquity([...prev.equity, ...delta.equity]),
               trades: [...prev.trades, ...delta.trades].slice(-TRADE_LIMIT),
               pnl: mergeLatestByKey(prev.pnl, delta.pnl, (p) => p.slot),
               win_rates: mergeLatestByKey(prev.win_rates, delta.win_rates, (w) => w.slot),
@@ -273,6 +283,11 @@ export default function RunOverview({ run }: { run: Run }) {
       )
     })
     source.addEventListener('done', () => source.close())
+    // EventSource auto-retries by default and can't distinguish a 404 (the
+    // run ended right as the connection opened - a real race, since /overview
+    // and /stream are two separate requests) from a transient network blip.
+    // Close outright rather than let it silently retry forever.
+    source.onerror = () => source.close()
     return () => source.close()
   }, [isLive, run.project, run.run_id])
 
