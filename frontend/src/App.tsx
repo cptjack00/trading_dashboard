@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import ConfigRoots from './ConfigRoots'
 import NewRun from './NewRun'
 import RunComparison from './RunComparison'
-import RunList, { type Run } from './RunList'
+import RunList, { useRuns, type Run } from './RunList'
 import RunOverview from './RunOverview'
+import Topstrip from './Topstrip'
 
 function runKey(run: Run): string {
   return `${run.project}-${run.run_id}`
@@ -60,12 +61,20 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 }
 
 function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
-  const [selectedRun, setSelectedRun] = useState<Run | null>(null)
+  const runs = useRuns()
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [compareMode, setCompareMode] = useState(false)
   const [compareSelection, setCompareSelection] = useState<Run[]>([])
   const [comparing, setComparing] = useState<Run[] | null>(null)
   const [showConfigRoots, setShowConfigRoots] = useState(false)
   const [showNewRun, setShowNewRun] = useState(false)
+
+  const selectedRun = selectedKey ? runs.find((r) => runKey(r) === selectedKey) ?? null : null
+
+  function selectRun(run: Run) {
+    setComparing(null)
+    setSelectedKey(runKey(run))
+  }
 
   function toggleCompareSelection(run: Run) {
     setCompareSelection((prev) => {
@@ -86,53 +95,72 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   }
 
   return (
-    <main className="dashboard">
-      <header>
-        <h1>Signal Deck</h1>
-        <div>
-          <button onClick={() => setShowNewRun(true)}>New run</button>
-          <button onClick={() => setShowConfigRoots(true)}>Config roots</button>
-          <button onClick={handleLogout}>Log out</button>
-        </div>
-      </header>
-      {showNewRun ? (
-        <NewRun onBack={() => setShowNewRun(false)} onStarted={() => setShowNewRun(false)} />
-      ) : showConfigRoots ? (
-        <ConfigRoots onBack={() => setShowConfigRoots(false)} />
-      ) : comparing ? (
-        <RunComparison
-          runs={comparing}
-          onBack={() => {
-            setComparing(null)
-            exitCompareMode()
-          }}
-        />
-      ) : selectedRun ? (
-        <RunOverview run={selectedRun} onBack={() => setSelectedRun(null)} />
-      ) : (
-        <>
-          <div className="compare-bar">
-            {compareMode ? (
-              <>
-                <span>{compareSelection.length} of 2–4 runs selected</span>
-                <button disabled={compareSelection.length < 2} onClick={() => setComparing(compareSelection)}>
-                  Compare
-                </button>
-                <button onClick={exitCompareMode}>Cancel</button>
-              </>
-            ) : (
-              <button onClick={() => setCompareMode(true)}>Compare runs</button>
-            )}
+    <div className="shell">
+      <Topstrip runs={runs} />
+      <div className="workspace">
+        <aside className="rail">
+          <div className="rail-head">
+            <span className="eyebrow">Runs</span>
+            <div className="rail-actions">
+              <button
+                className={`new-run-btn${compareMode ? ' on' : ''}`}
+                onClick={() => (compareMode ? exitCompareMode() : setCompareMode(true))}
+              >
+                ⇄ Compare
+              </button>
+              <button className="new-run-btn" onClick={() => setShowNewRun(true)}>
+                + New run
+              </button>
+            </div>
           </div>
           <RunList
-            onSelectRun={setSelectedRun}
+            runs={runs}
+            activeKey={selectedKey ?? undefined}
+            onSelectRun={selectRun}
             compareMode={compareMode}
             selectedKeys={new Set(compareSelection.map(runKey))}
             onToggleCompare={toggleCompareSelection}
           />
-        </>
-      )}
-    </main>
+          {compareMode && (
+            <div className="compare-bar">
+              <span>{compareSelection.length} of 2–4 runs selected</span>
+              <button className="btn-mini go" disabled={compareSelection.length < 2} onClick={() => setComparing(compareSelection)}>
+                Compare
+              </button>
+              <button className="btn-mini" onClick={exitCompareMode}>
+                Cancel
+              </button>
+            </div>
+          )}
+          <div className="rail-foot">
+            <button className="new-run-btn" onClick={() => setShowConfigRoots(true)}>
+              Config roots
+            </button>
+            <button className="new-run-btn" onClick={handleLogout}>
+              Log out
+            </button>
+          </div>
+        </aside>
+        <main className="stage">
+          {comparing ? (
+            <RunComparison
+              runs={comparing}
+              onBack={() => {
+                setComparing(null)
+                exitCompareMode()
+              }}
+            />
+          ) : selectedRun ? (
+            <RunOverview run={selectedRun} />
+          ) : (
+            <p className="scope-empty">Select a run from the left, or start a new one.</p>
+          )}
+        </main>
+      </div>
+
+      {showNewRun && <NewRun onBack={() => setShowNewRun(false)} onStarted={() => setShowNewRun(false)} />}
+      {showConfigRoots && <ConfigRoots onBack={() => setShowConfigRoots(false)} />}
+    </div>
   )
 }
 

@@ -14,87 +14,8 @@ export type Run = {
 
 const POLL_MS = 5000
 
-function formatDuration(seconds: number): string {
-  const total = Math.max(0, Math.round(seconds))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':')
-}
-
-function formatDate(ts: number): string {
-  return new Date(ts * 1000).toLocaleString()
-}
-
-function RunRow({
-  run,
-  now,
-  onSelect,
-  selected,
-  showCheckbox,
-}: {
-  run: Run
-  now: number
-  onSelect: (run: Run) => void
-  selected?: boolean
-  showCheckbox?: boolean
-}) {
-  const isBacktest = run.status === 'backtest'
-  const end = run.ended_at ?? now
-  const duration = end - run.started_at
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onSelect(run)
-    }
-  }
-
-  return (
-    <li
-      className={`run-row run-row--${run.status}${selected ? ' run-row--selected' : ''}`}
-      onClick={() => onSelect(run)}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
-    >
-      {showCheckbox && (
-        <span className="run-checkbox" aria-hidden="true">
-          {selected ? '☑' : '☐'}
-        </span>
-      )}
-      <span className={`pulse pulse--${run.status === 'live' ? 'live' : 'dead'}`} aria-hidden="true" />
-      <span className="run-project">{run.project}</span>
-      <span className={`run-badge run-badge--${run.status}`}>{run.status.toUpperCase()}</span>
-      <span className="run-id">{run.run_id}</span>
-      {isBacktest ? (
-        <span className="run-duration">
-          {formatDate(run.started_at)} → {run.ended_at ? formatDate(run.ended_at) : 'in progress'}
-        </span>
-      ) : (
-        <span className="run-duration">{formatDuration(duration)}</span>
-      )}
-      <span className={`run-pnl ${run.pnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}`}>
-        {run.pnl >= 0 ? '+' : ''}
-        {run.pnl.toFixed(2)}
-      </span>
-    </li>
-  )
-}
-
-export default function RunList({
-  onSelectRun,
-  compareMode = false,
-  selectedKeys,
-  onToggleCompare,
-}: {
-  onSelectRun: (run: Run) => void
-  compareMode?: boolean
-  selectedKeys?: Set<string>
-  onToggleCompare?: (run: Run) => void
-}) {
+export function useRuns(): Run[] {
   const [runs, setRuns] = useState<Run[]>([])
-  const [now, setNow] = useState(() => Date.now() / 1000)
 
   useEffect(() => {
     let cancelled = false
@@ -112,13 +33,95 @@ export default function RunList({
     }
   }, [])
 
+  return runs
+}
+
+function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':')
+}
+
+function RunTicket({
+  run,
+  now,
+  active,
+  onSelect,
+  selected,
+  showCheckbox,
+}: {
+  run: Run
+  now: number
+  active?: boolean
+  onSelect: (run: Run) => void
+  selected?: boolean
+  showCheckbox?: boolean
+}) {
+  const end = run.ended_at ?? now
+  const duration = end - run.started_at
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onSelect(run)
+    }
+  }
+
+  return (
+    <li
+      className={`run-ticket channel-${run.project}${active ? ' active' : ''}${selected ? ' selected' : ''}`}
+      onClick={() => onSelect(run)}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+    >
+      {showCheckbox && (
+        <span className={`ticket-check${selected ? ' checked' : ''}`} aria-hidden="true">
+          {selected ? '✓' : ''}
+        </span>
+      )}
+      <span className={`ticket-status ${run.status}`} aria-hidden="true" />
+      <span className="ticket-main">
+        <span className="ticket-name">{run.run_id}</span>
+        <span className="ticket-meta">
+          <span>{run.project}</span>
+          <span>{run.status === 'backtest' ? 'BACKTEST' : formatDuration(duration)}</span>
+        </span>
+      </span>
+      <span className={`ticket-pnl ${run.pnl > 0 ? 'pos' : run.pnl < 0 ? 'neg' : 'flat'}`}>
+        {run.pnl >= 0 ? '+' : ''}
+        {run.pnl.toFixed(2)}
+      </span>
+    </li>
+  )
+}
+
+export default function RunList({
+  runs,
+  activeKey,
+  onSelectRun,
+  compareMode = false,
+  selectedKeys,
+  onToggleCompare,
+}: {
+  runs: Run[]
+  activeKey?: string
+  onSelectRun: (run: Run) => void
+  compareMode?: boolean
+  selectedKeys?: Set<string>
+  onToggleCompare?: (run: Run) => void
+}) {
+  const [now, setNow] = useState(() => Date.now() / 1000)
+
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now() / 1000), 1000)
     return () => clearInterval(tick)
   }, [])
 
   if (runs.length === 0) {
-    return <p>No runs yet.</p>
+    return <p className="overview-empty">No runs yet.</p>
   }
 
   return (
@@ -126,10 +129,11 @@ export default function RunList({
       {runs.map((run) => {
         const key = `${run.project}-${run.run_id}`
         return (
-          <RunRow
+          <RunTicket
             key={key}
             run={run}
             now={now}
+            active={activeKey === key}
             onSelect={compareMode ? onToggleCompare! : onSelectRun}
             selected={compareMode && (selectedKeys?.has(key) ?? false)}
             showCheckbox={compareMode}

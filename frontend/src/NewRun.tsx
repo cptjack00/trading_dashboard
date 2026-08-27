@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Modal from './Modal'
 
 const PROJECTS = ['rustle', 'ticktrader'] as const
 type Project = (typeof PROJECTS)[number]
@@ -36,11 +37,6 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
     setArmed(false)
   }
 
-  function selectConfig(c: string) {
-    setConfig(c)
-    setArmed(false)
-  }
-
   async function handleStart() {
     setStarting(true)
     setError(null)
@@ -61,43 +57,59 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
   const canStart = config !== '' && (runType === 'backtest' || armed)
 
   return (
-    <div className="new-run">
-      <button className="back-button" onClick={onBack}>
-        ← Back
-      </button>
-      <h2>New run</h2>
-
-      <section className="new-run-stage">
-        <p className="new-run-label">1. Project</p>
-        <div className="run-tabs">
+    <Modal
+      title="Start a new run"
+      onClose={onBack}
+      foot={
+        <>
+          {error && (
+            <span role="alert" className="stop-confirm">
+              {error}
+            </span>
+          )}
+          <button
+            className={`btn next${runType === 'live' ? ` arm${armed ? ' ready' : ''}` : ''}`}
+            disabled={!canStart || starting}
+            onClick={handleStart}
+          >
+            {runType === 'live' ? 'Start live run' : 'Start backtest'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>Project</label>
+        <div className="tabs">
           {PROJECTS.map((p) => (
             <button
               key={p}
-              className={`run-tab${project === p ? ' run-tab--active' : ''}`}
+              className={`tab${project === p ? ` active ${p}` : ''}`}
               onClick={() => selectProject(p)}
             >
               {p}
             </button>
           ))}
         </div>
+      </div>
 
-        <p className="new-run-label">2. Run type</p>
-        <div className="run-tabs">
+      <div className="field">
+        <label>Run type</label>
+        <div className="tabs">
           {(['live', 'backtest'] as RunType[]).map((t) => (
             <button
               key={t}
-              className={`run-tab${runType === t ? ' run-tab--active' : ''}`}
+              className={`tab${runType === t ? ' active' : ''}`}
               onClick={() => selectRunType(t)}
             >
               {t.toUpperCase()}
             </button>
           ))}
         </div>
+      </div>
 
-        <p className="new-run-label">
-          <label htmlFor="new-run-config">3. Config</label>
-        </p>
-        <select id="new-run-config" value={config} onChange={(e) => selectConfig(e.target.value)}>
+      <div className="field">
+        <label htmlFor="new-run-config">Config</label>
+        <select id="new-run-config" value={config} onChange={(e) => setConfig(e.target.value)}>
           <option value="">Select a config…</option>
           {configs.map((c) => (
             <option key={c} value={c}>
@@ -105,30 +117,23 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
             </option>
           ))}
         </select>
-      </section>
+      </div>
 
       {config && (
-        <section className="new-run-stage new-run-stage--2">
-          {runType === 'live' ? (
-            <label className="new-run-arm">
-              <input type="checkbox" checked={armed} onChange={(e) => setArmed(e.target.checked)} />
-              This launches a real trading process.
-            </label>
-          ) : (
-            <p className="overview-empty">Reads historical data only.</p>
-          )}
-
-          {error && <p role="alert">{error}</p>}
-
-          <button
-            className={runType === 'live' ? 'danger-button' : undefined}
-            disabled={!canStart || starting}
-            onClick={handleStart}
-          >
-            {runType === 'live' ? 'Start' : 'Start backtest'}
-          </button>
-        </section>
+        <div className="recap">
+          <span className={`r-project ${project}`}>{project}</span>
+          <span className="r-config">{config}</span>
+        </div>
       )}
-    </div>
+
+      {config && runType === 'live' && (
+        <label className="arm-toggle">
+          <input type="checkbox" checked={armed} onChange={(e) => setArmed(e.target.checked)} />
+          <span className="switch" />
+          <span className="arm-copy">This launches a real trading process.</span>
+        </label>
+      )}
+      {config && runType === 'backtest' && <p className="overview-empty">Reads historical data only.</p>}
+    </Modal>
   )
 }

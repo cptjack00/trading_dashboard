@@ -144,7 +144,7 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
 
   if (!confirming) {
     return (
-      <button className="danger-button" onClick={() => setConfirming(true)}>
+      <button className="action-btn stop" onClick={() => setConfirming(true)}>
         Stop run
       </button>
     )
@@ -153,10 +153,10 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
   return (
     <span className="stop-confirm">
       Stop this run?
-      <button className="danger-button" disabled={stopping} onClick={handleConfirm}>
+      <button className="action-btn confirm" disabled={stopping} onClick={handleConfirm}>
         Confirm stop
       </button>
-      <button disabled={stopping} onClick={() => setConfirming(false)}>
+      <button className="action-cancel" disabled={stopping} onClick={() => setConfirming(false)}>
         Cancel
       </button>
       {error && <span role="alert">{error}</span>}
@@ -193,7 +193,7 @@ function TradeTape({ trades }: { trades: TradeRow[] }) {
   )
 }
 
-export default function RunOverview({ run, onBack }: { run: Run; onBack: () => void }) {
+export default function RunOverview({ run }: { run: Run }) {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
 
@@ -258,41 +258,51 @@ export default function RunOverview({ run, onBack }: { run: Run; onBack: () => v
     }
     return (
       <>
-        <section>
-          <h3>Equity</h3>
-          <EquityCurve points={overview.equity} />
-        </section>
-        <section>
-          <h3>Trade tape</h3>
-          <TradeTape trades={overview.trades} />
-        </section>
+        <div className="panel">
+          <div className="panel-head">
+            <span className="eyebrow">Equity</span>
+          </div>
+          <div className="chart-pad">
+            <EquityCurve points={overview.equity} />
+          </div>
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <span className="eyebrow">Trade tape</span>
+          </div>
+          <div className="tape-wrap">
+            <TradeTape trades={overview.trades} />
+          </div>
+        </div>
       </>
     )
   }
 
   return (
     <div className="run-overview">
-      <button className="back-button" onClick={onBack}>
-        ← Back to runs
-      </button>
-      <header className="run-overview-header">
-        <span className={`pulse pulse--${status === 'live' ? 'live' : 'dead'}`} aria-hidden="true" />
-        <h2>
-          {run.project} / {run.run_id}
-        </h2>
-        <span className={`run-badge run-badge--${status}`}>{status.toUpperCase()}</span>
-        {status === 'live' && <StopButton project={run.project} runId={run.run_id} />}
-      </header>
+      <div className="stage-head">
+        <div className="stage-title-row">
+          <span className={`pulse pulse--${status === 'live' ? 'live' : 'dead'}`} aria-hidden="true" />
+          <span className="stage-title">{run.run_id}</span>
+          <span className={`tag ${run.project}`}>{run.project}</span>
+          <span className={`badge ${status}`}>{status.toUpperCase()}</span>
+        </div>
+        {status === 'live' && (
+          <div className="action-actions">
+            <StopButton project={run.project} runId={run.run_id} />
+          </div>
+        )}
+      </div>
 
-      <nav className="run-tabs">
+      <nav className="tabbar">
         {visibleTabs.map(({ key, label }) => (
-          <button key={key} className={`run-tab ${tab === key ? 'run-tab--active' : ''}`} onClick={() => setTab(key)}>
+          <button key={key} className={`tabbtn${tab === key ? ' active' : ''}`} onClick={() => setTab(key)}>
             {label}
           </button>
         ))}
       </nav>
 
-      {renderTab()}
+      <div className="tab-body">{renderTab()}</div>
     </div>
   )
 }

@@ -14,7 +14,7 @@ type Overview = {
   fills: FillsPoint[]
 }
 
-const RUN_COLORS = ['#aa3bff', '#16a34a', '#eab308', '#dc2626']
+const RUN_COLORS = ['var(--rustle)', 'var(--ticktrader)', 'var(--amber)', 'var(--phosphor)']
 
 function runKey(run: Run): string {
   return `${run.project}-${run.run_id}`
@@ -89,54 +89,77 @@ export default function RunComparison({ runs, onBack }: { runs: Run[]; onBack: (
 
   return (
     <div className="run-comparison">
-      <button className="back-button" onClick={onBack}>
-        ← Back to runs
-      </button>
-      <h2>Comparing {runs.length} runs</h2>
+      <div className="stage-head">
+        <div className="stage-title-row">
+          <span className="stage-title">Comparing {runs.length} runs</span>
+        </div>
+        <button className="action-cancel" onClick={onBack}>
+          Exit compare
+        </button>
+      </div>
 
-      <table className="data-table comparison-table">
-        <thead>
-          <tr>
-            <th>Run</th>
-            <th>PnL</th>
-            <th>Fills</th>
-            <th>Win rate</th>
-            {showDelta && <th>Δ PnL</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run, i) => {
-            const overview = overviews[i]
-            const t = overview ? totals(overview) : null
-            const delta = showDelta && i === 1 && t && baseline ? t.pnl - baseline.pnl : null
-            return (
-              <tr key={runKey(run)}>
-                <td>
-                  {run.project} / {run.run_id}
-                </td>
-                <td className={t && t.pnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{t ? t.pnl.toFixed(2) : '…'}</td>
-                <td>{t ? t.fills : '…'}</td>
-                <td>{t ? t.winRate : '…'}</td>
-                {showDelta && (
-                  <td className={delta !== null ? (delta >= 0 ? 'run-pnl--pos' : 'run-pnl--neg') : undefined}>
-                    {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`}
-                  </td>
-                )}
+      <div className="compare-chips">
+        {runs.map((run, i) => (
+          <span className="compare-chip" key={runKey(run)}>
+            <i style={{ background: RUN_COLORS[i % RUN_COLORS.length] }} />
+            {run.project}/{run.run_id}
+          </span>
+        ))}
+      </div>
+
+      <div className="panel">
+        <div className="tape-wrap">
+          <table className="compare-table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>PnL</th>
+                <th>Fills</th>
+                <th>Win rate</th>
+                {showDelta && <th>Δ PnL</th>}
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {runs.map((run, i) => {
+                const overview = overviews[i]
+                const t = overview ? totals(overview) : null
+                const delta = showDelta && i === 1 && t && baseline ? t.pnl - baseline.pnl : null
+                return (
+                  <tr key={runKey(run)}>
+                    <td>
+                      {run.project} / {run.run_id}
+                    </td>
+                    <td className={t && t.pnl >= 0 ? 'pos' : 'neg'}>{t ? t.pnl.toFixed(2) : '…'}</td>
+                    <td>{t ? t.fills : '…'}</td>
+                    <td>{t ? t.winRate : '…'}</td>
+                    {showDelta && (
+                      <td className={delta !== null ? (delta >= 0 ? 'pos' : 'neg') : undefined}>
+                        {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`}
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      <section>
-        <h3>Cumulative PnL by run progress</h3>
-        <LineChart series={equitySeries} />
-      </section>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="eyebrow">Cumulative PnL by run progress</span>
+        </div>
+        <div className="chart-pad">
+          <LineChart series={equitySeries} />
+        </div>
+      </div>
 
-      <section>
-        <h3>Per-slot PnL &amp; fills</h3>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="eyebrow">Per-slot PnL &amp; fills</span>
+        </div>
         {slotsAlign ? (
-          <>
+          <div className="chart-pad">
             <BarChart
               groups={groupLabels}
               series={seriesFor((o, slot) => {
@@ -148,13 +171,13 @@ export default function RunComparison({ runs, onBack }: { runs: Run[]; onBack: (
               groups={groupLabels}
               series={seriesFor((o, slot) => o.fills.find((x) => x.slot === slot)?.count ?? 0)}
             />
-          </>
+          </div>
         ) : (
           <p className="overview-empty">
             {allLoaded ? 'Selected runs have different slot counts — per-slot comparison unavailable.' : 'Loading…'}
           </p>
         )}
-      </section>
+      </div>
     </div>
   )
 }

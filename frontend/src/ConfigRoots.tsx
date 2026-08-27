@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Modal from './Modal'
 
 const PROJECTS = ['rustle', 'ticktrader'] as const
 type Project = (typeof PROJECTS)[number]
@@ -52,30 +53,35 @@ export default function ConfigRoots({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="config-roots">
-      <button className="back-button" onClick={onBack}>
-        ← Back
-      </button>
-      <h2>Config roots</h2>
-      <div className="run-tabs">
-        {PROJECTS.map((p) => (
-          <button
-            key={p}
-            className={`run-tab${project === p ? ' run-tab--active' : ''}`}
-            onClick={() => selectProject(p)}
-          >
-            {p}
-          </button>
-        ))}
+    <Modal title="Config roots" onClose={onBack}>
+      <div className="field">
+        <label>Project</label>
+        <div className="tabs">
+          {PROJECTS.map((p) => (
+            <button
+              key={p}
+              className={`tab${project === p ? ` active ${p}` : ''}`}
+              onClick={() => selectProject(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
       </div>
-      <ul className="config-roots-list">
-        {roots.length === 0 && <li className="overview-empty">No config roots configured.</li>}
-        {roots.map((root) => (
-          <li key={root}>{root}</li>
-        ))}
-      </ul>
-      <form onSubmit={handleAdd} className="config-roots-form">
+
+      <div className="field">
+        <label>Registered roots</label>
+        <ul className="config-roots-list">
+          {roots.length === 0 && <li className="overview-empty">No config roots configured.</li>}
+          {roots.map((root) => (
+            <li key={root}>{root}</li>
+          ))}
+        </ul>
+      </div>
+
+      <form onSubmit={handleAdd} className="add-dir">
         <input
+          className="addpath"
           value={newRoot}
           onChange={(e) => setNewRoot(e.target.value)}
           placeholder="/absolute/path/to/configs"
@@ -84,16 +90,24 @@ export default function ConfigRoots({ onBack }: { onBack: () => void }) {
           Add root
         </button>
       </form>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <span role="alert" className="stop-confirm">
+          {error}
+        </span>
+      )}
+
       <button onClick={handleScan}>Scan for configs</button>
       {configs !== null && (
-        <ul className="config-roots-list">
-          {configs.length === 0 && <li className="overview-empty">No .toml configs found.</li>}
-          {configs.map((c) => (
-            <li key={c}>{c}</li>
-          ))}
-        </ul>
+        <div className="field">
+          <label>Found configs</label>
+          <ul className="config-roots-list">
+            {configs.length === 0 && <li className="overview-empty">No .toml configs found.</li>}
+            {configs.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
       )}
-    </div>
+    </Modal>
   )
 }
