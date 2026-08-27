@@ -18,13 +18,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
-from .runs import _status, find_run, iter_runs
+from .runs import _status, find_run, iter_runs, ticktrader_log_paths
 from .sources.base import (
     EquityPoint,
     Fills,
     HealthSample,
     LatencySample,
     LogSourceAdapter,
+    ParsedLog,
     PnL,
     PricePoint,
     Trade,
@@ -47,8 +48,41 @@ TICKTRADER_LATENCY_CHANNELS = ("data", "api")
 RunKey = tuple[str, str]  # (project, run_id)
 
 
-def _log_path(run_dir: Path, project: str) -> Path:
-    return run_dir / "trade_log.jsonl" if project == "rustle" else run_dir / "trade_log.csv"
+def _log_paths(run_dir: Path, project: str) -> list[Path]:
+    """Every trade-log file backing this run. Almost always one file; a
+    ticktrader multi-strategy launch splits trades across `{main}-{strategy}`
+    sibling files instead of the main dir's own (header-only) trade_log.csv -
+    see `runs.ticktrader_log_paths`."""
+    if project == "rustle":
+        return [run_dir / "trade_log.jsonl"]
+    return ticktrader_log_paths(run_dir)
+
+
+class _MergingAdapter:
+    """Tails several log files as one logical run's worth of trades - the
+    ticktrader multi-strategy case above. Slot ids are strategy-namespaced in
+    that data (e.g. `comeback_v9_5_0` vs `spread_v2_6_0`), so folding their
+    per-slot pnl/win-rate/fills together is safe."""
+
+    def __init__(self, adapters: list[LogSourceAdapter]) -> None:
+        self._adapters = adapters
+
+    def tail(self) -> ParsedLog:
+        merged = ParsedLog()
+        for adapter in self._adapters:
+            parsed = adapter.tail()
+            merged.trades.extend(parsed.trades)
+            merged.equity.extend(parsed.equity)
+            merged.status.extend(parsed.status)
+            merged.health.extend(parsed.health)
+            merged.win_rates.extend(parsed.win_rates)
+            merged.pnl.extend(parsed.pnl)
+            merged.fills.extend(parsed.fills)
+            for symbol, points in parsed.symbol_prices.items():
+                merged.symbol_prices.setdefault(symbol, []).extend(points)
+            for channel, samples in parsed.channel_latency.items():
+                merged.channel_latency.setdefault(channel, []).extend(samples)
+        return merged
 
 
 def _make_adapter(log_path: Path, project: str, manifest: dict) -> LogSourceAdapter:
@@ -56,6 +90,12 @@ def _make_adapter(log_path: Path, project: str, manifest: dict) -> LogSourceAdap
         config_path = manifest.get("config_path")
         return RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
     return TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
+
+
+def _make_adapters(log_paths: list[Path], project: str, manifest: dict) -> "LogSourceAdapter | _MergingAdapter":
+    if len(log_paths) == 1:
+        return _make_adapter(log_paths[0], project, manifest)
+    return _MergingAdapter([_make_adapter(p, project, manifest) for p in log_paths])
 
 
 def _ticktrader_latency_path(run_dir: Path, channel: str) -> Path:
@@ -172,7 +212,7 @@ class Delta:
 @dataclass
 class _LiveState:
     project: str
-    adapter: LogSourceAdapter | None
+    adapter: "LogSourceAdapter | _MergingAdapter | None"
     encrypted_locked: bool = False
     equity: list[EquityPoint] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
@@ -223,18 +263,18 @@ class LiveIngestionManager:
             self._poll_run(key, run_dir, manifest, project)
 
     def _poll_run(self, key: RunKey, run_dir: Path, manifest: dict, project: str) -> None:
-        log_path = _log_path(run_dir, project)
-        if not log_path.is_file():
+        log_paths = [p for p in _log_paths(run_dir, project) if p.is_file()]
+        if not log_paths:
             return
 
         state = self._live.get(key)
         if state is None:
-            encrypted = is_encrypted(log_path)
+            encrypted = any(is_encrypted(p) for p in log_paths)
             if encrypted and project == "rustle":
                 # rustle interleaves trades/health/latency in one file - an encrypted
                 # log locks all of it, since there's nothing separable to tail.
                 return
-            adapter = None if encrypted else _make_adapter(log_path, project, manifest)
+            adapter = None if encrypted else _make_adapters(log_paths, project, manifest)
             state = _LiveState(project=project, adapter=adapter, encrypted_locked=encrypted)
             self._live[key] = state
 
@@ -324,24 +364,24 @@ class LiveIngestionManager:
             return None
         run_dir, manifest = found
         status = _status(run_type=manifest["run_type"], state=manifest["state"])
-        log_path = _log_path(run_dir, project)
+        log_paths = [p for p in _log_paths(run_dir, project) if p.is_file()]
         # TickTrader-para's latency channels live in their own files, so they stay
         # readable regardless of the trade log's encryption state; rustle has no
         # such separation (see `_poll_run`).
         channel_latency = _ticktrader_latency_snapshot(run_dir) if project == "ticktrader" else {}
 
-        if not log_path.is_file():
+        if not log_paths:
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=False,
                 channel_latency=channel_latency,
             )
-        elif is_encrypted(log_path):
+        elif any(is_encrypted(p) for p in log_paths):
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=True,
                 channel_latency=channel_latency,
             )
         else:
-            adapter = _make_adapter(log_path, project, manifest)
+            adapter = _make_adapters(log_paths, project, manifest)
             parsed = adapter.tail()
             latest_pnl: dict[str, PnL] = {}
             latest_win_rates: dict[str, WinRate] = {}

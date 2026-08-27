@@ -351,6 +351,40 @@ def test_fill_history_tracks_cumulative_count_per_slot_over_time(tmp_path: Path)
     assert [f.count for f in overview.fill_history["s1"]] == [1, 2, 3]
 
 
+def test_ticktrader_multi_strategy_run_merges_child_trade_logs(tmp_path: Path):
+    # TickTrader-para's multi-strategy launch convention: the main dir's own
+    # trade_log.csv is header-only (no fills); the real trades live in
+    # `{main}-{strategy}` sibling dirs, which must be tailed instead.
+    root = tmp_path / "tt-runs"
+    main_dir = root / "ticktrader-20260827-095011"
+    _write_manifest(
+        main_dir, run_id="ticktrader-20260827-095011", run_type="live", state="live", started_at=1.0, ended_at=None
+    )
+    (main_dir / "trade_log.csv").write_text("timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl\n")
+
+    for strategy, price, pnl in [("comeback_v9", 100.0, 5.0), ("spread_v2", 50.0, 2.0)]:
+        child_dir = root / f"ticktrader-20260827-095011-{strategy}"
+        child_dir.mkdir(parents=True)
+        (child_dir / "trade_log.csv").write_text(
+            "\n".join(
+                [
+                    "slot_id,timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl",
+                    f"{strategy}_1,09:00:01.000,TRADE,{price},BUY,1,{pnl},0.0",
+                ]
+            )
+            + "\n"
+        )
+
+    manager = LiveIngestionManager(None, root)
+    manager.poll_once()
+
+    overview = manager.get_overview("ticktrader", "ticktrader-20260827-095011")
+    assert overview.status == "live"
+    assert {t.price for t in overview.trades} == {100.0, 50.0}
+    assert sum(f.count for f in overview.fills) == 2
+    assert sum(p.realized for p in overview.pnl) == 7.0
+
+
 def test_ticktrader_live_run_uses_symbol_from_manifest(tmp_path: Path):
     root = tmp_path / "tt-runs"
     run_dir = root / "run-2"

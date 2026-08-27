@@ -8,10 +8,10 @@ reading and JSONL latency reading, not imported as a dependency.
 
 from __future__ import annotations
 
+import bisect
 import csv
 import json
 import math
-import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -113,16 +113,20 @@ class TickTraderLatencyAdapter(LogSourceAdapter):
     """Reads a `*_latency.jsonl` file (one raw `duration_ms` sample per line)
     and emits a running mean/p99/p999 for `channel` on every new sample.
 
-    ponytail: keeps every raw sample in memory and resorts the full history
-    on each new line; fine for a single trading-day session, switch to a
-    streaming quantile estimator with a bounded window if sessions grow
-    long-running.
+    ponytail: keeps every raw sample in memory (fine for a single trading-day
+    session - tens of thousands of samples, not millions) but inserts each new
+    sample into an already-sorted list (`bisect.insort`) and keeps a running
+    sum, rather than resorting/resumming the full history on every line - a
+    real multi-strategy session's ~32k-sample api_latency.jsonl made the old
+    full-resort-per-line approach take minutes, not the seconds the comment
+    here used to assume.
     """
 
     def __init__(self, path: Path, *, channel: str, **kwargs: Any) -> None:
         super().__init__(path, **kwargs)
         self._channel = channel
         self._durations: list[float] = []
+        self._sum: float = 0.0
 
     def parse_line(self, line: bytes, into: ParsedLog) -> None:
         text = line.strip()
@@ -132,14 +136,15 @@ class TickTraderLatencyAdapter(LogSourceAdapter):
         duration = event.get("duration_ms")
         if duration is None:
             return
-        self._durations.append(float(duration))
-        ordered = sorted(self._durations)
+        value = float(duration)
+        bisect.insort(self._durations, value)
+        self._sum += value
         into.add_latency(
             self._channel,
             LatencySample(
                 ts=_parse_iso(event.get("ts", "")),
-                mean=statistics.fmean(ordered),
-                p99=_percentile(ordered, 0.99),
-                p999=_percentile(ordered, 0.999),
+                mean=self._sum / len(self._durations),
+                p99=_percentile(self._durations, 0.99),
+                p999=_percentile(self._durations, 0.999),
             ),
         )

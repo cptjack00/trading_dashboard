@@ -239,6 +239,20 @@ def _group_ticktrader_children(run_dirs: list[Path]) -> dict[Path, list[Path]]:
     return children_by_parent
 
 
+def ticktrader_log_paths(run_dir: Path) -> list[Path]:
+    """Every `trade_log.csv` backing `run_dir`: its own file, or - for a
+    multi-strategy launch - each `{run_dir.name}-{strategy}` sibling's file
+    instead (see `_group_ticktrader_children`; the main dir's own log is
+    header-only when siblings exist), for run-detail (Overview/Performance/
+    Market) consumers that need to tail the run's real trade data."""
+    root = run_dir.parent
+    siblings = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
+    children = _group_ticktrader_children(siblings).get(run_dir, [])
+    if children:
+        return sorted(c / "trade_log.csv" for c in children)
+    return [run_dir / "trade_log.csv"]
+
+
 def _ticktrader_pnl(log_path: Path) -> float:
     adapter = TickTraderTradeLogAdapter(log_path, symbol="")
     return _latest_pnl_total(_pnl_or_locked(log_path, adapter))

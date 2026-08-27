@@ -129,7 +129,12 @@
   own `trade_log.csv` is header-only — plus one `{main}-{strategy}` sibling
   dir per strategy slot holding the real trades; those siblings are grouped
   under the main dir (summing pnl across the family) so a multi-strategy
-  launch shows as one run-list entry instead of one per strategy.
+  launch shows as one run-list entry instead of one per strategy. The same
+  grouping now also applies to that run's detail view (Overview/Performance/
+  Market/`/trades`): `live.py` tails every child's `trade_log.csv` instead of
+  the main dir's own (empty) one and merges their trades/pnl/fills/prices,
+  since slot ids are already strategy-namespaced in that data
+  (`comeback_v9_5_0` vs `spread_v2_6_0`) so merging per-slot state is safe.
 - Interactive charts: replaced the hand-rolled inline-SVG `LineChart`/
   `BarChart` (`charts.tsx`) and `RunOverview`'s equity curve with
   `uPlot`-backed equivalents (same props shape, so callers needed no changes
@@ -213,3 +218,10 @@
   of once per fill — a multi-fill trade (e.g. an opening fill followed by a
   closing fill) was previously counted as two separate win/loss events
   instead of one.
+- `TickTraderLatencyAdapter` (`sources/ticktrader.py`) no longer resorts and
+  re-averages its entire sample history on every incoming line — it now
+  inserts into an already-sorted list (`bisect.insort`) and keeps a running
+  sum instead. Discovered live: a real multi-strategy session's ~32k-sample
+  `api_latency.jsonl` took the old approach past a minute to fully tail
+  (blocking the live-poll loop's single-threaded event loop the whole time);
+  the incremental version reads the same file in ~0.2s with identical output.
