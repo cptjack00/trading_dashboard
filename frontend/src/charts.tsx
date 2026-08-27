@@ -111,7 +111,18 @@ function alignToSharedX(series: ChartSeries[], markers: ChartMarker[]) {
   return { xs, seriesYs, markerColors, markerYs }
 }
 
-export function LineChart({ series, markers }: { series: ChartSeries[]; markers?: ChartMarker[] }) {
+export function LineChart({
+  series,
+  markers,
+  timeAxis = true,
+}: {
+  series: ChartSeries[]
+  markers?: ChartMarker[]
+  // Whether x is real epoch seconds (uPlot formats ticks as times/dates) or
+  // an arbitrary numeric axis - RunComparison's cumulative-PnL-by-progress
+  // chart uses a normalized 0..1 fraction, not real time, so it opts out.
+  timeAxis?: boolean
+}) {
   const { xs, seriesYs, markerColors, markerYs } = alignToSharedX(series, markers ?? [])
   const data = [xs, ...seriesYs, ...markerYs] as uPlot.AlignedData
 
@@ -121,7 +132,7 @@ export function LineChart({ series, markers }: { series: ChartSeries[]; markers?
       height: HEIGHT,
       cursor: { drag: { x: true, y: false } },
       legend: { show: series.length + markerColors.length <= 6 },
-      scales: { x: { time: false } },
+      scales: { x: { time: timeAxis } },
       series: [
         {},
         ...series.map((s) => {

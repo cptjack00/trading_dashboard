@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
-from .runs import _status, find_run, iter_runs, ticktrader_log_paths
+from .runs import _status, find_run, iter_runs, ticktrader_log_paths, ticktrader_run_date
 from .sources.base import (
     EquityPoint,
     Fills,
@@ -36,7 +36,7 @@ from .sources.rustle import RustleAdapter
 from .sources.ticktrader import TickTraderLatencyAdapter, TickTraderTradeLogAdapter
 
 POLL_INTERVAL_SECONDS = 1.0
-EQUITY_HISTORY_LIMIT = 500
+EQUITY_BUCKET_SECONDS = 1
 TRADE_TAPE_LIMIT = 50
 PRICE_HISTORY_LIMIT = 500
 FILLS_HISTORY_LIMIT = 500
@@ -89,7 +89,8 @@ def _make_adapter(log_path: Path, project: str, manifest: dict) -> LogSourceAdap
     if project == "rustle":
         config_path = manifest.get("config_path")
         return RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
-    return TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
+    run_date = ticktrader_run_date(log_path.parent, manifest)
+    return TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""), run_date=run_date)
 
 
 def _make_adapters(log_paths: list[Path], project: str, manifest: dict) -> "LogSourceAdapter | _MergingAdapter":
@@ -171,6 +172,21 @@ def _merge_extend(target: dict[str, list], new: dict[str, list]) -> None:
         if not values:
             continue
         target[key] = target.get(key, []) + values
+
+
+def _bucket_equity(points: list[EquityPoint]) -> list[EquityPoint]:
+    """Keep the latest point observed within each `EQUITY_BUCKET_SECONDS`-wide
+    time bucket, spanning the run's full lifetime rather than a fixed-count
+    window: a count-based cap only ever shows the most recent slice once a
+    fast-ticking run (ticktrader emits one equity point per pnl-bearing row -
+    hundreds of thousands over a trading day) outgrows it, no matter how large
+    the count. This keeps the curve's total size bounded (a trading day is a
+    few tens of thousands of one-second buckets, not hundreds of thousands of
+    raw rows) while it still covers the whole run from open to now."""
+    by_bucket: dict[int, EquityPoint] = {}
+    for point in points:
+        by_bucket[int(point.ts // EQUITY_BUCKET_SECONDS)] = point
+    return [by_bucket[key] for key in sorted(by_bucket)]
 
 
 @dataclass
@@ -303,7 +319,7 @@ class LiveIngestionManager:
         if not any((equity, trades, pnl, win_rates, fills, health, prices, latency)):
             return
 
-        state.equity = (state.equity + equity)[-EQUITY_HISTORY_LIMIT:]
+        state.equity = _bucket_equity(state.equity + equity)
         # Uncapped: a run's total trade count is small enough (thousands, not
         # millions) to hold in memory for its lifetime - `/overview` trims to the
         # latest TRADE_TAPE_LIMIT for first paint; `/trades` pages through the rest.
@@ -396,7 +412,7 @@ class LiveIngestionManager:
                 channel_latency = dict(parsed.channel_latency)
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=False,
-                equity=parsed.equity[-EQUITY_HISTORY_LIMIT:], trades=parsed.trades,
+                equity=_bucket_equity(parsed.equity), trades=parsed.trades,
                 pnl=list(latest_pnl.values()), win_rates=list(latest_win_rates.values()),
                 fills=list(fill_totals.values()), health=list(latest_health.values()),
                 symbol_prices={k: v[-PRICE_HISTORY_LIMIT:] for k, v in parsed.symbol_prices.items()},

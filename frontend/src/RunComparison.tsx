@@ -150,7 +150,7 @@ export default function RunComparison({ runs, onBack }: { runs: Run[]; onBack: (
           <span className="eyebrow">Cumulative PnL by run progress</span>
         </div>
         <div className="chart-pad">
-          <LineChart series={equitySeries} />
+          <LineChart series={equitySeries} timeAxis={false} />
         </div>
       </div>
 

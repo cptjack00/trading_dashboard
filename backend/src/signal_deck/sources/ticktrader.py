@@ -27,21 +27,6 @@ from .base import (
     Trade,
 )
 
-_MIDNIGHT = datetime(1900, 1, 1)
-
-
-def _parse_time_of_day(text: str) -> float:
-    """TickTrader-para's trade log has no date, only HH:MM:SS.mmm. Returns
-    seconds-since-midnight.
-
-    ponytail: sessions never cross midnight in practice; add a date column
-    upstream if that changes.
-    """
-    if not text:
-        return 0.0
-    return (datetime.strptime(text, "%H:%M:%S.%f") - _MIDNIGHT).total_seconds()
-
-
 def _parse_iso(text: str) -> float:
     return datetime.fromisoformat(text).timestamp() if text else 0.0
 
@@ -58,12 +43,27 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
     strategy versions, so rows are looked up by header name, not position.
     """
 
-    def __init__(self, path: Path, *, symbol: str, default_slot: str = "default", **kwargs: Any) -> None:
+    def __init__(
+        self, path: Path, *, symbol: str, default_slot: str = "default", run_date: str | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(path, **kwargs)
         self._symbol = symbol
         self._default_slot = default_slot
         self._columns: list[str] | None = None
         self._slot_total: dict[str, float] = {}  # latest realized+unrealized per slot
+        # trade_log.csv's timestamps are bare HH:MM:SS.mmm, no date - `run_date`
+        # anchors them to a real epoch time so the frontend's time-axis charts
+        # and time-of-day formatting show something meaningful. Falls back to
+        # today (wrong calendar date for a run started on an earlier day, but
+        # keeps relative time ordering correct) when the caller has no better
+        # source (e.g. the run dir's own `YYYYMMDD`-stamped name).
+        self._run_date = run_date or datetime.now().strftime("%Y%m%d")
+
+    def _epoch(self, timestamp: str) -> float:
+        if not timestamp:
+            return 0.0
+        dt = datetime.strptime(f"{self._run_date} {timestamp}", "%Y%m%d %H:%M:%S.%f")
+        return dt.timestamp()
 
     def parse_line(self, line: bytes, into: ParsedLog) -> None:
         text = line.decode("utf-8", errors="replace").strip()
@@ -78,7 +78,7 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
         self._handle_row(dict(zip(self._columns, values)), into)
 
     def _handle_row(self, row: dict[str, str], into: ParsedLog) -> None:
-        ts = _parse_time_of_day(row.get("timestamp", ""))
+        ts = self._epoch(row.get("timestamp", ""))
         slot = row.get("slot_id") or self._default_slot
 
         # Emitted on every row that carries a pnl value, not just trades, so this

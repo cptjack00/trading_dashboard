@@ -266,6 +266,27 @@ def test_ticktrader_completed_run_reads_latency_regardless_of_trade_log_encrypti
     assert overview.channel_latency["data"][0].mean == 3.0
 
 
+def test_equity_is_time_bucketed_not_count_capped(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    # Two fills within the same wall-clock second, then one far later - the
+    # shared bucket should keep only its later point, not both, and there's
+    # no fixed-count cap discarding the run's earlier history.
+    rows = [
+        _filled_row("s1", "09:00:00.100", 1.0),
+        _filled_row("s1", "09:00:00.900", 2.0),
+        _filled_row("s1", "09:05:00.000", 3.0),
+    ]
+    (run_dir / "trade_log.jsonl").write_text(_rustle_trade_log(*rows))
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert [p.equity for p in overview.equity] == [2.0, 3.0]
+
+
 def test_trade_tape_retention_is_uncapped_past_fifty(tmp_path: Path):
     root = tmp_path / "rustle-runs"
     run_dir = root / "run-1"

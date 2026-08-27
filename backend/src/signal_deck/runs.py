@@ -20,8 +20,10 @@ against one shape.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from .process_control import is_pid_alive
@@ -253,8 +255,26 @@ def ticktrader_log_paths(run_dir: Path) -> list[Path]:
     return [run_dir / "trade_log.csv"]
 
 
-def _ticktrader_pnl(log_path: Path) -> float:
-    adapter = TickTraderTradeLogAdapter(log_path, symbol="")
+_TICKTRADER_DATE_RE = re.compile(r"(\d{8})")
+
+
+def ticktrader_run_date(run_dir: Path, manifest: dict) -> str:
+    """Best-effort `YYYYMMDD` for a ticktrader run, to anchor its trade log's
+    bare `HH:MM:SS.mmm` timestamps to a real date. TickTrader-para's own
+    directory convention embeds it directly (`ticktrader-YYYYMMDD-HHMMSS`,
+    optionally `-strategy`-suffixed); a dashboard-launched run's manifest
+    `started_at` is the fallback, then today."""
+    match = _TICKTRADER_DATE_RE.search(run_dir.name)
+    if match:
+        return match.group(1)
+    started_at = manifest.get("started_at")
+    if isinstance(started_at, (int, float)):
+        return datetime.fromtimestamp(started_at).strftime("%Y%m%d")
+    return datetime.now().strftime("%Y%m%d")
+
+
+def _ticktrader_pnl(log_path: Path, run_date: str) -> float:
+    adapter = TickTraderTradeLogAdapter(log_path, symbol="", run_date=run_date)
     return _latest_pnl_total(_pnl_or_locked(log_path, adapter))
 
 
@@ -267,9 +287,10 @@ def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
     for run_dir, manifest in pairs:
         if run_dir in child_dirs:
             continue
-        pnl_total = _ticktrader_pnl(run_dir / "trade_log.csv")
+        run_date = ticktrader_run_date(run_dir, manifest)
+        pnl_total = _ticktrader_pnl(run_dir / "trade_log.csv", run_date)
         for child_dir in children_by_parent.get(run_dir, []):
-            pnl_total += _ticktrader_pnl(child_dir / "trade_log.csv")
+            pnl_total += _ticktrader_pnl(child_dir / "trade_log.csv", run_date)
         summaries.append(
             RunSummary(
                 run_id=manifest["run_id"],

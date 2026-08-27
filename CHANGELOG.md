@@ -231,3 +231,21 @@
   pnl-bearing row: the sum of every slot's latest realized+unrealized, so a
   multi-slot run's curve is the account's total mark-to-market value, not
   just one slot's own delta.
+- `TickTraderTradeLogAdapter`'s timestamps were bare seconds-since-midnight
+  with no real date anchor (unlike rustle's adapter), so every chart's x-axis
+  showed meaningless raw numbers (e.g. `41330`) instead of a time - and with
+  time-axis formatting disabled entirely in `charts.tsx`, rustle's real epoch
+  timestamps read just as poorly. ticktrader timestamps now anchor to a real
+  date (`YYYYMMDD` parsed from the run dir's own name - TickTrader-para's
+  convention embeds it directly - falling back to the manifest's
+  `started_at`, then today), and uPlot's native time-axis formatting is on
+  by default for `LineChart`/`StepChart` (`RunComparison`'s one
+  normalized-progress-fraction chart opts out via `timeAxis={false}`).
+- The equity curve was capped to its last 500 points, discarded oldest-first
+  as new ones streamed in - for a fast-ticking run (ticktrader emits one
+  point per pnl-bearing row, hundreds of thousands over a trading day) that
+  meant the graph only ever showed the last ~70 seconds of activity, no
+  matter when you opened the dashboard. Replaced the count cap with
+  one-second time buckets (keep the latest point per bucket): bounded size
+  (a trading day is tens of thousands of buckets, not hundreds of thousands
+  of raw rows) that still spans the run's entire lifetime.
