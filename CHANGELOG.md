@@ -166,6 +166,14 @@
 
 ### Changed
 
+- Replaced `uPlot` with `lightweight-charts` for the equity curve, latency,
+  market, per-slot fills, and run-comparison charts: real crosshair tooltips,
+  native scroll/pinch zoom and drag-to-pan, and a proper legend, in place of
+  the bare unstyled lines. `BarChart` (per-slot comparison) now draws grouped
+  bars on a fake ordinal time axis, since the library has no native
+  categorical axis — group labels are positioned by reading the chart's own
+  time-to-pixel mapping rather than guessed via CSS, so they stay aligned
+  under their cluster at any width.
 - New Run flow: replaced each project's single configured binary
   (`SIGNAL_DECK_RUSTLE_BINARY` / `SIGNAL_DECK_TICKTRADER_BINARY`, always
   invoked as `<binary> --config <path>`) with a launch command per

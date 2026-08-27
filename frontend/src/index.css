@@ -651,7 +651,7 @@ select:focus-visible {
   position: relative;
   width: 100%;
 }
-.uplot-wrap {
+.chart-canvas {
   width: 100%;
   overflow: hidden;
 }
@@ -662,6 +662,66 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.chart-tooltip {
+  display: none;
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+  padding: 6px 9px;
+  background: var(--panel-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chart-tooltip-time {
+  color: var(--ink-dim);
+  margin-bottom: 2px;
+}
+.chart-tooltip-swatch {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.chart-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.chart-legend-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.bar-chart-labels {
+  position: relative;
+  height: 14px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+.bar-chart-labels span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 /* ---------- compare view ---------- */
