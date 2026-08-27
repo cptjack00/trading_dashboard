@@ -260,7 +260,9 @@ select:focus-visible {
 }
 .rail-actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
 }
 .new-run-btn {
   background: transparent;
@@ -269,7 +271,7 @@ select:focus-visible {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.06em;
-  padding: 6px 10px;
+  padding: 6px 6px;
   white-space: nowrap;
 }
 .new-run-btn.on {
