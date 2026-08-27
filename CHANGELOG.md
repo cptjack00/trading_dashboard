@@ -225,3 +225,9 @@
   `api_latency.jsonl` took the old approach past a minute to fully tail
   (blocking the live-poll loop's single-threaded event loop the whole time);
   the incremental version reads the same file in ~0.2s with identical output.
+- `TickTraderTradeLogAdapter` never emitted `EquityPoint`s — every ticktrader
+  run's Overview tab equity curve has always read "Not enough data yet.",
+  since only rustle's adapter populated one. Now emits one on every
+  pnl-bearing row: the sum of every slot's latest realized+unrealized, so a
+  multi-slot run's curve is the account's total mark-to-market value, not
+  just one slot's own delta.

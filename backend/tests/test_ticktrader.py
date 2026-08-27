@@ -32,6 +32,27 @@ def test_normalizes_trade_and_pnl_rows(tmp_path: Path):
 
     assert [p.realized for p in result.pnl] == [0.0, 0.0, 1.0]  # TICK row + 2 TRADE rows
     assert [f.count for f in result.fills] == [5, 5]
+    assert [e.equity for e in result.equity] == [0.0, 0.0, 1.0]  # single slot, no unrealized in the fixture
+
+
+def test_equity_sums_latest_realized_plus_unrealized_across_slots(tmp_path: Path):
+    path = tmp_path / "trade_log.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "slot_id,timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl",
+                "s1,09:00:00.000,TRADE,100.0,BUY,1,2.0,0.5",
+                "s2,09:00:01.000,TRADE,100.0,BUY,1,3.0,0.0",
+                "s1,09:00:02.000,TRADE,100.0,SELL,1,4.0,0.0",  # s1 updates, s2's last value carries forward
+            ]
+        )
+        + "\n"
+    )
+    adapter = TickTraderTradeLogAdapter(path, symbol="XYZ-PERP")
+
+    result = adapter.tail()
+
+    assert [e.equity for e in result.equity] == [2.5, 5.5, 7.0]
 
 
 def test_fill_type_rows_are_normalized_like_trade_rows(tmp_path: Path):

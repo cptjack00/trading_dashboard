@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import (
+    EquityPoint,
     Fills,
     LatencySample,
     LogSourceAdapter,
@@ -62,6 +63,7 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
         self._symbol = symbol
         self._default_slot = default_slot
         self._columns: list[str] | None = None
+        self._slot_total: dict[str, float] = {}  # latest realized+unrealized per slot
 
     def parse_line(self, line: bytes, into: ParsedLog) -> None:
         text = line.decode("utf-8", errors="replace").strip()
@@ -83,9 +85,14 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
         # is a live per-slot equity curve rather than only per-trade deltas.
         pnl_str = row.get("pnl")
         if pnl_str:
-            into.pnl.append(
-                PnL(ts=ts, slot=slot, realized=float(pnl_str), unrealized=float(row.get("unrealized_pnl") or 0.0))
-            )
+            realized = float(pnl_str)
+            unrealized = float(row.get("unrealized_pnl") or 0.0)
+            into.pnl.append(PnL(ts=ts, slot=slot, realized=realized, unrealized=unrealized))
+            # Overview's equity curve is the account's total mark-to-market value
+            # over time - the sum of every slot's latest realized+unrealized, not
+            # just this one slot's own delta.
+            self._slot_total[slot] = realized + unrealized
+            into.equity.append(EquityPoint(ts=ts, equity=sum(self._slot_total.values())))
 
         # ponytail: trade_log.csv carries no independent quote/tick stream, only
         # TRADE/FILL rows - so every matched-price point this adapter emits also
