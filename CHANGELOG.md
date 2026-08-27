@@ -208,6 +208,11 @@
   (`health_log.jsonl`, the live-only `:9464/metrics` Prometheus scrape)
   isn't wired up — the Latency tab and live health checks stay empty for
   rustle runs.
+- `/api/runs` (the run list) now polls every 60s instead of 5s - which runs
+  exist barely changes minute to minute, and a run's own live PnL/equity
+  already updates far faster via its Overview SSE stream once selected. A
+  "⟳ Rescan" button in the rail triggers an immediate on-demand refresh.
+- Removed the Overview tab's trade tape (raw fill-by-fill table) - unused.
 
 ### Fixed
 
@@ -259,3 +264,15 @@
   the initial `/overview` fetch and the `/stream` connection opening, two
   separate requests) from a transient blip - it now closes outright on any
   stream error instead of silently retrying.
+- Switching the selected run left the Overview tab (equity curve,
+  performance/market/latency panels) showing the previously-selected run's
+  data: `<RunOverview>` was never keyed by run identity, so React patched the
+  existing instance in place on a switch instead of remounting it - stale
+  component state stuck around, and each uPlot chart kept its prior instance
+  (and zoom range) rather than rebuilding against the new run's data. Now
+  keyed by `project-run_id`, so a run switch always mounts a fresh instance.
+- The run list's PnL column re-parsed each run's entire trade log from
+  scratch on every poll (`discover_all_runs` via `/api/runs`), duplicating
+  work the live-ingestion loop already does incrementally every second for
+  live runs. A live run's PnL now comes straight from `LiveIngestionManager`'s
+  already-tailed state instead of a from-scratch reparse.

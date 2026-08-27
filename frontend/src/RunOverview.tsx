@@ -161,93 +161,15 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
   )
 }
 
-const TRADES_PAGE_SIZE = 100
-const SCROLL_LOAD_THRESHOLD_PX = 40
-
-// `trades` is the live-updating recent tail (from /overview + SSE, capped at
-// TRADE_LIMIT); `older` holds pages fetched on demand as the operator scrolls
-// past what's already loaded, via GET .../trades?before=<ts>. Both stay
-// chronological (ascending ts) so `[...older, ...trades]` is one ordered list.
-function TradeTape({ project, runId, trades }: { project: string; runId: string; trades: TradeRow[] }) {
-  const [older, setOlder] = useState<TradeRow[]>([])
-  const [hasMore, setHasMore] = useState(true)
-  const [loading, setLoading] = useState(false)
-
-  // Reset the loaded-older-pages state when the run identity changes, without
-  // an effect: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  const [trackedRun, setTrackedRun] = useState(`${project}/${runId}`)
-  const runIdentity = `${project}/${runId}`
-  if (runIdentity !== trackedRun) {
-    setTrackedRun(runIdentity)
-    setOlder([])
-    setHasMore(true)
-  }
-
-  const all = [...older, ...trades]
-
-  async function loadMore() {
-    if (loading || !hasMore || all.length === 0) return
-    setLoading(true)
-    const oldestTs = all[0].ts
-    const res = await fetch(
-      `/api/runs/${project}/${runId}/trades?before=${oldestTs}&limit=${TRADES_PAGE_SIZE}`,
-    )
-    setLoading(false)
-    if (!res.ok) return
-    const page: TradeRow[] = await res.json()
-    if (page.length === 0) {
-      setHasMore(false)
-      return
-    }
-    setOlder((prev) => [...page, ...prev])
-  }
-
-  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
-    const el = e.currentTarget
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_LOAD_THRESHOLD_PX) {
-      void loadMore()
-    }
-  }
-
-  if (all.length === 0) {
-    return <p className="overview-empty">No trades yet.</p>
-  }
-  const recent = [...all].reverse()
-  return (
-    <div className="trade-tape-scroll" onScroll={handleScroll}>
-      <table className="trade-tape">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Side</th>
-            <th>Qty</th>
-            <th>Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recent.map((t, i) => (
-            <tr key={i} className={`trade-row trade-row--${t.side}`}>
-              <td>{new Date(t.ts * 1000).toLocaleTimeString()}</td>
-              <td>{t.side.toUpperCase()}</td>
-              <td>{t.qty}</td>
-              <td>{t.price}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {loading && <p className="overview-empty">Loading…</p>}
-    </div>
-  )
-}
-
 export default function RunOverview({ run }: { run: Run }) {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
 
   useEffect(() => {
     let cancelled = false
-    // Component always remounts fresh on run change (App only ever shows
-    // RunOverview after a RunList selection), so no reset-on-change needed.
+    // App keys RunOverview by run identity, so a run switch remounts this
+    // component fresh (new state, new chart instances) instead of patching in
+    // place - no reset-on-change needed here.
     fetch(`/api/runs/${run.project}/${run.run_id}/overview`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: Overview | null) => {
@@ -317,24 +239,14 @@ export default function RunOverview({ run }: { run: Run }) {
       return <RunMarket symbolPrices={overview.symbol_prices} />
     }
     return (
-      <>
-        <div className="panel">
-          <div className="panel-head">
-            <span className="eyebrow">Equity</span>
-          </div>
-          <div className="chart-pad">
-            <EquityCurve points={overview.equity} />
-          </div>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="eyebrow">Equity</span>
         </div>
-        <div className="panel">
-          <div className="panel-head">
-            <span className="eyebrow">Trade tape</span>
-          </div>
-          <div className="tape-wrap">
-            <TradeTape project={run.project} runId={run.run_id} trades={overview.trades} />
-          </div>
+        <div className="chart-pad">
+          <EquityCurve points={overview.equity} />
         </div>
-      </>
+      </div>
     )
   }
 

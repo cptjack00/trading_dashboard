@@ -424,6 +424,16 @@ class LiveIngestionManager:
             self._completed_cache[key] = overview
         return overview
 
+    def live_pnl_totals(self) -> dict[RunKey, float]:
+        """Total pnl (realized+unrealized) per currently-live run, read off the
+        state this manager already tails every `POLL_INTERVAL_SECONDS` - lets
+        `/api/runs` show live PnL without re-parsing each run's whole log from
+        scratch on its own (much slower) poll cadence."""
+        return {
+            key: sum(p.realized + p.unrealized for p in state.latest_pnl.values())
+            for key, state in self._live.items()
+        }
+
     def get_trades(self, project: str, run_id: str, *, before: float | None, limit: int) -> list[Trade] | None:
         """Older page of a run's full (uncapped) trade history, for the trade
         tape's scroll-to-load - `/overview` only ever hands back the latest

@@ -199,22 +199,28 @@ def _pnl_or_locked(log_path: Path, adapter) -> list[PnL]:
     return adapter.tail().pnl
 
 
-def discover_rustle_runs(root: Path) -> list[RunSummary]:
+def discover_rustle_runs(root: Path, *, live_pnl: dict[tuple[str, str], float] | None = None) -> list[RunSummary]:
+    live_pnl = live_pnl or {}
     summaries = []
     for run_dir, manifest in iter_runs(root, "rustle"):
-        log_path = run_dir / "trade_log.jsonl"
-        config_path = manifest.get("config_path")
-        adapter = RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
-        pnl = _pnl_or_locked(log_path, adapter)
+        run_id = manifest["run_id"]
+        cached_pnl = live_pnl.get(("rustle", run_id))
+        if cached_pnl is not None:
+            pnl_total = cached_pnl
+        else:
+            log_path = run_dir / "trade_log.jsonl"
+            config_path = manifest.get("config_path")
+            adapter = RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
+            pnl_total = _latest_pnl_total(_pnl_or_locked(log_path, adapter))
         summaries.append(
             RunSummary(
-                run_id=manifest["run_id"],
+                run_id=run_id,
                 project="rustle",
                 run_type=manifest["run_type"],
                 status=_status(run_type=manifest["run_type"], state=manifest["state"]),
                 started_at=manifest["started_at"],
                 ended_at=manifest.get("ended_at"),
-                pnl=_latest_pnl_total(pnl),
+                pnl=pnl_total,
             )
         )
     return summaries
@@ -278,7 +284,8 @@ def _ticktrader_pnl(log_path: Path, run_date: str) -> float:
     return _latest_pnl_total(_pnl_or_locked(log_path, adapter))
 
 
-def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
+def discover_ticktrader_runs(root: Path, *, live_pnl: dict[tuple[str, str], float] | None = None) -> list[RunSummary]:
+    live_pnl = live_pnl or {}
     pairs = iter_runs(root, "ticktrader")
     children_by_parent = _group_ticktrader_children([run_dir for run_dir, _ in pairs])
     child_dirs = {child for kids in children_by_parent.values() for child in kids}
@@ -287,13 +294,18 @@ def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
     for run_dir, manifest in pairs:
         if run_dir in child_dirs:
             continue
-        run_date = ticktrader_run_date(run_dir, manifest)
-        pnl_total = _ticktrader_pnl(run_dir / "trade_log.csv", run_date)
-        for child_dir in children_by_parent.get(run_dir, []):
-            pnl_total += _ticktrader_pnl(child_dir / "trade_log.csv", run_date)
+        run_id = manifest["run_id"]
+        cached_pnl = live_pnl.get(("ticktrader", run_id))
+        if cached_pnl is not None:
+            pnl_total = cached_pnl
+        else:
+            run_date = ticktrader_run_date(run_dir, manifest)
+            pnl_total = _ticktrader_pnl(run_dir / "trade_log.csv", run_date)
+            for child_dir in children_by_parent.get(run_dir, []):
+                pnl_total += _ticktrader_pnl(child_dir / "trade_log.csv", run_date)
         summaries.append(
             RunSummary(
-                run_id=manifest["run_id"],
+                run_id=run_id,
                 project="ticktrader",
                 run_type=manifest["run_type"],
                 status=_status(run_type=manifest["run_type"], state=manifest["state"]),
@@ -305,12 +317,17 @@ def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
     return summaries
 
 
-def discover_all_runs(rustle_root: Path | None, ticktrader_root: Path | None) -> list[RunSummary]:
+def discover_all_runs(
+    rustle_root: Path | None,
+    ticktrader_root: Path | None,
+    *,
+    live_pnl: dict[tuple[str, str], float] | None = None,
+) -> list[RunSummary]:
     runs: list[RunSummary] = []
     if rustle_root is not None:
-        runs.extend(discover_rustle_runs(rustle_root))
+        runs.extend(discover_rustle_runs(rustle_root, live_pnl=live_pnl))
     if ticktrader_root is not None:
-        runs.extend(discover_ticktrader_runs(ticktrader_root))
+        runs.extend(discover_ticktrader_runs(ticktrader_root, live_pnl=live_pnl))
     return runs
 
 

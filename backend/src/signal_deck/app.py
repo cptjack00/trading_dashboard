@@ -128,10 +128,20 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
     @app.get("/api/runs")
     def list_runs(request: Request) -> list[dict]:
         require_session(request)
-        # Reconciles tracked runs' liveness on the same ~5s cadence the frontend
+        # Reconciles tracked runs' liveness on the same cadence the frontend
         # already polls this endpoint at, rather than running a second background loop.
         process_registry.reconcile()
-        runs = discover_all_runs(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
+        runs = discover_all_runs(
+            settings.rustle_runs_dir,
+            settings.ticktrader_runs_dir,
+            # Live runs' PnL comes from live_manager's own ~1s incremental tail
+            # instead of re-parsing each run's whole log here too - a run's own
+            # Overview stream (SSE) is where per-second freshness actually
+            # matters; this list only needs to be cheap, not fast, since which
+            # runs exist barely changes minute to minute (the frontend polls it
+            # every 60s, plus an on-demand manual rescan).
+            live_pnl=live_manager.live_pnl_totals(),
+        )
         return [asdict(run) for run in runs]
 
     def _require_known_project(project: str) -> None:

@@ -61,7 +61,7 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 }
 
 function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
-  const runs = useRuns()
+  const { runs, refresh: refreshRuns } = useRuns()
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [compareMode, setCompareMode] = useState(false)
   const [compareSelection, setCompareSelection] = useState<Run[]>([])
@@ -102,6 +102,9 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
           <div className="rail-head">
             <span className="eyebrow">Runs</span>
             <div className="rail-actions">
+              <button className="new-run-btn" onClick={refreshRuns} title="Rescan runs now">
+                ⟳ Rescan
+              </button>
               <button
                 className={`new-run-btn${compareMode ? ' on' : ''}`}
                 onClick={() => (compareMode ? exitCompareMode() : setCompareMode(true))}
@@ -151,7 +154,7 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
               }}
             />
           ) : selectedRun ? (
-            <RunOverview run={selectedRun} />
+            <RunOverview key={runKey(selectedRun)} run={selectedRun} />
           ) : (
             <p className="scope-empty">Select a run from the left, or start a new one.</p>
           )}

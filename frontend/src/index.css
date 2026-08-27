@@ -597,13 +597,8 @@ select:focus-visible {
 .tape-wrap {
   overflow-x: auto;
 }
-.trade-tape-scroll {
-  max-height: 420px;
-  overflow-y: auto;
-}
 
 /* ---------- tables ---------- */
-.trade-tape,
 .data-table,
 .compare-table {
   width: 100%;
@@ -611,7 +606,6 @@ select:focus-visible {
   font-family: var(--font-mono);
   font-size: 12.5px;
 }
-.trade-tape th,
 .data-table th,
 .compare-table th {
   text-align: left;
@@ -623,20 +617,15 @@ select:focus-visible {
   padding: 8px 14px;
   border-bottom: 1px solid var(--hairline-soft);
 }
-.trade-tape td,
 .data-table td,
 .compare-table td {
   text-align: left;
   padding: 7px 14px;
   border-bottom: 1px solid var(--hairline-soft);
 }
-.trade-tape tr:last-child td,
 .data-table tr:last-child td,
 .compare-table tr:last-child td {
   border-bottom: none;
-}
-.trade-tape tr:hover td {
-  background: var(--panel-raised);
 }
 .data-table tfoot td {
   font-weight: 600;
@@ -646,15 +635,6 @@ select:focus-visible {
 .compare-table th:not(:first-child),
 .compare-table td:not(:first-child) {
   text-align: right;
-}
-
-.trade-row--buy td:nth-child(2) {
-  color: var(--phosphor);
-  font-weight: 600;
-}
-.trade-row--sell td:nth-child(2) {
-  color: var(--ember);
-  font-weight: 600;
 }
 
 .run-pnl--pos,

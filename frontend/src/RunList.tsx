@@ -12,10 +12,15 @@ export type Run = {
   pnl: number
 }
 
-const POLL_MS = 5000
+// Which runs exist barely changes minute to minute (a run starting/ending is
+// a rare event, not a per-second one) - a live run's own PnL/equity updates
+// via its Overview SSE stream instead, at a much faster cadence than this
+// list needs. `refresh` lets the UI force an immediate rescan on demand.
+const POLL_MS = 60_000
 
-export function useRuns(): Run[] {
+export function useRuns(): { runs: Run[]; refresh: () => void } {
   const [runs, setRuns] = useState<Run[]>([])
+  const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -31,9 +36,9 @@ export function useRuns(): Run[] {
       cancelled = true
       clearInterval(poll)
     }
-  }, [])
+  }, [nonce])
 
-  return runs
+  return { runs, refresh: () => setNonce((n) => n + 1) }
 }
 
 function formatDuration(seconds: number): string {
