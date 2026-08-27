@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from .auth import SESSION_COOKIE, create_session_token, verify_session_token
 from .config import Settings
 from .config_discovery import PROJECTS, add_config_root, load_config_roots, scan_configs
-from .live import LiveIngestionManager
+from .live import TRADE_TAPE_LIMIT, LiveIngestionManager
 from .process_control import ProcessRegistry, RunNotFoundError
 from .runs import discover_all_runs
 
@@ -56,6 +56,7 @@ def _format_sse(delta) -> str:
         "health": [asdict(h) for h in delta.health],
         "symbol_prices": _by_key(delta.symbol_prices),
         "channel_latency": _by_key(delta.channel_latency),
+        "fill_history": _by_key(delta.fill_history),
     }
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -68,13 +69,16 @@ def _overview_json(overview) -> dict:
         "encrypted_locked": overview.encrypted_locked,
         "live_tracked": overview.live_tracked,
         "equity": [asdict(p) for p in overview.equity],
-        "trades": [asdict(t) for t in overview.trades],
+        # Full (uncapped) history is retained for the /trades page-through; the
+        # first-paint response here still only ever hands back the latest 50.
+        "trades": [asdict(t) for t in overview.trades[-TRADE_TAPE_LIMIT:]],
         "pnl": [asdict(p) for p in overview.pnl],
         "win_rates": [asdict(w) for w in overview.win_rates],
         "fills": [asdict(f) for f in overview.fills],
         "health": [asdict(h) for h in overview.health],
         "symbol_prices": _by_key(overview.symbol_prices),
         "channel_latency": _by_key(overview.channel_latency),
+        "fill_history": _by_key(overview.fill_history),
     }
 
 
@@ -226,6 +230,16 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
         if overview is None:
             raise HTTPException(status_code=404, detail="run not found")
         return _overview_json(overview)
+
+    @app.get("/api/runs/{project}/{run_id}/trades")
+    def run_trades(
+        project: str, run_id: str, request: Request, before: float | None = None, limit: int = 100
+    ) -> list[dict]:
+        require_session(request)
+        trades = live_manager.get_trades(project, run_id, before=before, limit=limit)
+        if trades is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return [asdict(t) for t in trades]
 
     @app.get("/api/runs/{project}/{run_id}/stream")
     async def run_stream(project: str, run_id: str, request: Request) -> StreamingResponse:

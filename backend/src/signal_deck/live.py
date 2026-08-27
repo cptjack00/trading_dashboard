@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
-from .runs import _status, find_run, iter_manifests
+from .runs import _status, find_run, iter_runs
 from .sources.base import (
     EquityPoint,
     Fills,
@@ -38,6 +38,7 @@ POLL_INTERVAL_SECONDS = 1.0
 EQUITY_HISTORY_LIMIT = 500
 TRADE_TAPE_LIMIT = 50
 PRICE_HISTORY_LIMIT = 500
+FILLS_HISTORY_LIMIT = 500
 
 # ponytail: TickTrader-para's two known telemetry channels, hardcoded rather than
 # discovered - add a third only if a real channel shows up.
@@ -89,12 +90,30 @@ def _merge_latest_health(target: dict[str, HealthSample], entries: list[HealthSa
         target[entry.component] = entry
 
 
-def _merge_fill_counts(target: dict[str, Fills], entries: list[Fills]) -> None:
-    """Fold in new Fills samples, summing counts per slot rather than keeping only the latest."""
+def _group_by_slot(entries: list[Fills]) -> dict[str, list[Fills]]:
+    grouped: dict[str, list[Fills]] = {}
     for entry in entries:
-        prior = target.get(entry.slot)
+        grouped.setdefault(entry.slot, []).append(entry)
+    return grouped
+
+
+def _record_fills(
+    totals: dict[str, Fills], history: dict[str, list[Fills]], entries: list[Fills]
+) -> dict[str, list[Fills]]:
+    """Fold new per-fill events into `totals` (summed count per slot, latest-only -
+    what the Performance table shows) and into `history` (a capped running-total
+    series per slot, for the fills-over-time chart). Returns the new history
+    entries grouped by slot, for callers that also need this tick's delta."""
+    produced: list[Fills] = []
+    for entry in entries:
+        prior = totals.get(entry.slot)
         total = (prior.count if prior else 0) + entry.count
-        target[entry.slot] = Fills(ts=entry.ts, slot=entry.slot, count=total)
+        cumulative = Fills(ts=entry.ts, slot=entry.slot, count=total)
+        totals[entry.slot] = cumulative
+        produced.append(cumulative)
+    delta = _group_by_slot(produced)
+    _merge_capped(history, delta, FILLS_HISTORY_LIMIT)
+    return delta
 
 
 def _merge_capped(target: dict[str, list], new: dict[str, list], limit: int) -> None:
@@ -132,6 +151,9 @@ class Overview:
     health: list[HealthSample] = field(default_factory=list)
     symbol_prices: dict[str, list[PricePoint]] = field(default_factory=dict)
     channel_latency: dict[str, list[LatencySample]] = field(default_factory=dict)
+    # Per-slot running fill count over time (a step chart), distinct from `fills`
+    # above which only ever carries the latest cumulative total per slot.
+    fill_history: dict[str, list[Fills]] = field(default_factory=dict)
 
 
 @dataclass
@@ -144,6 +166,7 @@ class Delta:
     health: list[HealthSample] = field(default_factory=list)
     symbol_prices: dict[str, list[PricePoint]] = field(default_factory=dict)
     channel_latency: dict[str, list[LatencySample]] = field(default_factory=dict)
+    fill_history: dict[str, list[Fills]] = field(default_factory=dict)
 
 
 @dataclass
@@ -156,6 +179,7 @@ class _LiveState:
     latest_pnl: dict[str, PnL] = field(default_factory=dict)
     latest_win_rates: dict[str, WinRate] = field(default_factory=dict)
     fill_totals: dict[str, Fills] = field(default_factory=dict)
+    fill_history: dict[str, list[Fills]] = field(default_factory=dict)
     latest_health: dict[str, HealthSample] = field(default_factory=dict)
     symbol_prices: dict[str, list[PricePoint]] = field(default_factory=dict)
     channel_latency: dict[str, list[LatencySample]] = field(default_factory=dict)
@@ -240,17 +264,20 @@ class LiveIngestionManager:
             return
 
         state.equity = (state.equity + equity)[-EQUITY_HISTORY_LIMIT:]
-        state.trades = (state.trades + trades)[-TRADE_TAPE_LIMIT:]
+        # Uncapped: a run's total trade count is small enough (thousands, not
+        # millions) to hold in memory for its lifetime - `/overview` trims to the
+        # latest TRADE_TAPE_LIMIT for first paint; `/trades` pages through the rest.
+        state.trades = state.trades + trades
         _merge_latest_by_slot(state.latest_pnl, pnl)
         _merge_latest_by_slot(state.latest_win_rates, win_rates)
-        _merge_fill_counts(state.fill_totals, fills)
+        fill_history_delta = _record_fills(state.fill_totals, state.fill_history, fills)
         _merge_latest_health(state.latest_health, health)
         _merge_capped(state.symbol_prices, prices, PRICE_HISTORY_LIMIT)
         _merge_extend(state.channel_latency, latency)
 
         delta = Delta(
             equity=equity, trades=trades, pnl=pnl, win_rates=win_rates, fills=fills, health=health,
-            symbol_prices=prices, channel_latency=latency,
+            symbol_prices=prices, channel_latency=latency, fill_history=fill_history_delta,
         )
         for queue in state.subscribers:
             queue.put_nowait(delta)
@@ -285,6 +312,7 @@ class LiveIngestionManager:
                 fills=list(state.fill_totals.values()), health=list(state.latest_health.values()),
                 symbol_prices={k: list(v) for k, v in state.symbol_prices.items()},
                 channel_latency={k: list(v) for k, v in state.channel_latency.items()},
+                fill_history={k: list(v) for k, v in state.fill_history.items()},
             )
 
         cached = self._completed_cache.get(key)
@@ -318,25 +346,39 @@ class LiveIngestionManager:
             latest_pnl: dict[str, PnL] = {}
             latest_win_rates: dict[str, WinRate] = {}
             fill_totals: dict[str, Fills] = {}
+            fill_history: dict[str, list[Fills]] = {}
             latest_health: dict[str, HealthSample] = {}
             _merge_latest_by_slot(latest_pnl, parsed.pnl)
             _merge_latest_by_slot(latest_win_rates, parsed.win_rates)
-            _merge_fill_counts(fill_totals, parsed.fills)
+            _record_fills(fill_totals, fill_history, parsed.fills)
             _merge_latest_health(latest_health, parsed.health)
             if project == "rustle":
                 channel_latency = dict(parsed.channel_latency)
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=False,
-                equity=parsed.equity[-EQUITY_HISTORY_LIMIT:], trades=parsed.trades[-TRADE_TAPE_LIMIT:],
+                equity=parsed.equity[-EQUITY_HISTORY_LIMIT:], trades=parsed.trades,
                 pnl=list(latest_pnl.values()), win_rates=list(latest_win_rates.values()),
                 fills=list(fill_totals.values()), health=list(latest_health.values()),
                 symbol_prices={k: v[-PRICE_HISTORY_LIMIT:] for k, v in parsed.symbol_prices.items()},
                 channel_latency=channel_latency,
+                fill_history=fill_history,
             )
 
         if status != "live":
             self._completed_cache[key] = overview
         return overview
+
+    def get_trades(self, project: str, run_id: str, *, before: float | None, limit: int) -> list[Trade] | None:
+        """Older page of a run's full (uncapped) trade history, for the trade
+        tape's scroll-to-load - `/overview` only ever hands back the latest
+        `TRADE_TAPE_LIMIT` for first paint."""
+        overview = self.get_overview(project, run_id)
+        if overview is None:
+            return None
+        trades = overview.trades
+        if before is not None:
+            trades = [t for t in trades if t.ts < before]
+        return trades[-limit:]
 
     def subscribe(self, project: str, run_id: str) -> "asyncio.Queue[Delta | None] | None":
         state = self._live.get((project, run_id))
@@ -360,7 +402,7 @@ def find_all_live(
     for project, root in (("rustle", rustle_root), ("ticktrader", ticktrader_root)):
         if root is None:
             continue
-        for run_dir, manifest in iter_manifests(root):
+        for run_dir, manifest in iter_runs(root, project):
             if _status(run_type=manifest["run_type"], state=manifest["state"]) == "live":
                 live[(project, manifest["run_id"])] = (run_dir, manifest, project)
     return live

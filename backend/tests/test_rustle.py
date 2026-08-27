@@ -58,7 +58,7 @@ def test_equity_is_the_cross_slot_running_total(tmp_path: Path):
     assert [e.equity for e in result.equity] == [5.0, 3.0, 4.5]
 
 
-def test_win_rate_derived_from_realized_pnl_delta_between_fills(tmp_path: Path):
+def test_win_rate_derived_from_realized_pnl_delta_over_flat_to_flat_round_trips(tmp_path: Path):
     path = tmp_path / "trade_log.jsonl"
     path.write_bytes(FIXTURE.read_bytes())
     result = RustleAdapter(path, config_path=CONFIG).tail()
@@ -66,11 +66,13 @@ def test_win_rate_derived_from_realized_pnl_delta_between_fills(tmp_path: Path):
     by_slot_final = {}
     for w in result.win_rates:
         by_slot_final[w.slot] = w
-    # s1: first fill 0 -> 5.0 (win), second fill 5.0 -> 3.0 (loss).
+    # s1: opens (position 1, pnl 5.0, not yet scored), closes flat (position 0,
+    # pnl 3.0) - one round trip, net 0 -> 3.0 = a single win.
     assert by_slot_final["s1"].wins == 1
-    assert by_slot_final["s1"].losses == 1
-    # s2: first fill 0 -> 1.5 (win).
-    assert by_slot_final["s2"].wins == 1
+    assert by_slot_final["s1"].losses == 0
+    # s2: opens (position 1) and never returns to flat in this fixture - no
+    # completed round trip yet, so no win/loss is scored.
+    assert by_slot_final["s2"].wins == 0
     assert by_slot_final["s2"].losses == 0
 
 

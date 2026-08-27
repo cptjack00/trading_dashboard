@@ -104,6 +104,41 @@
   accountability. No halt/cancel/flatten commands, and none of the old
   Control channel's ceremony (`CommandBinding`, proposer/approver, audited
   journal), are exposed or rebuilt. (#10)
+- Independent run tracking: `runs.py` discovers runs the dashboard didn't
+  launch itself, alongside the existing manifest-based discovery — any
+  directory under a project's runs root holding a trade log
+  (`trade_log.jsonl`/`.csv`) with no `run.json` sibling, found via a
+  depth-agnostic scan (rustle nests two levels deep, ticktrader one). A
+  manifest-less run's `run_id` is its directory path relative to the runs
+  root with `/` replaced by `__`, stable across dashboard restarts. Liveness
+  comes from a `runner.pid` file both engines now write next to their trade
+  log (rustle's own `tt-live-runner` change, see its `CHANGELOG.md`;
+  ticktrader already had this): present and alive → `live`; otherwise →
+  a new `unknown` status, distinct from `crashed`/`stopped` since a run this
+  process never launched has no exit code or stop record to tell them apart.
+  The Stop button is hidden for `unknown` runs (no ownership to act on), and
+  its run-list badge reads as a neutral dot rather than a live pulse or a
+  crash indicator.
+- Interactive charts: replaced the hand-rolled inline-SVG `LineChart`/
+  `BarChart` (`charts.tsx`) and `RunOverview`'s equity curve with
+  `uPlot`-backed equivalents (same props shape, so callers needed no changes
+  beyond the equity curve itself) — labeled axes, a grid, a hover
+  tooltip/crosshair, and drag-to-zoom-on-x (double-click to reset) that a
+  hand-rolled SVG chart didn't have. The equity curve gains a filled-area
+  treatment shaded to zero. New: a "Fills over time" step chart on the
+  Performance tab, per slot — the backend now retains a capped running-total
+  time series per slot (`fill_history`) alongside the existing latest-total
+  snapshot the table already showed, since that snapshot alone had nothing
+  to plot a trend from.
+- Trade tape: dropped the hard 50-trade retention cap (`live.py`'s
+  `TRADE_TAPE_LIMIT` previously discarded everything older, both for the
+  in-memory live state and the on-demand completed-run read) — a run's full
+  trade history is now held in memory for its lifetime.
+  `GET /api/runs/{project}/{run_id}/trades?before=<ts>&limit=100` pages
+  through it; `/overview` still only ever returns the latest 50 for first
+  paint, so the initial load path is unchanged. The frontend trade tape is
+  now a scrollable list that fetches older pages on demand as the operator
+  scrolls, instead of rendering a fixed 50-row table.
 - Two owed ADRs and this repo's own `CONTEXT.md`: `docs/adr/0001-...` covers
   the encrypted-log tiering/framing/detection design (per-line AEAD framing
   over whole-file or field-level, a self-describing header over
@@ -152,8 +187,8 @@
   adapter construction from a new `config_path` field the process registry
   now writes into `run.json`; the bare `HH:MM:SS.mmm` timestamps are
   likewise anchored to the config's `from_date`. Win rate is derived
-  per-slot from each fill's realized-pnl delta (up vs. down since the
-  slot's last fill). Known gap: rustle's health/latency telemetry
+  per-slot (see Fixed, below, for the round-trip-vs-per-fill scoring
+  detail). Known gap: rustle's health/latency telemetry
   (`health_log.jsonl`, the live-only `:9464/metrics` Prometheus scrape)
   isn't wired up — the Latency tab and live health checks stay empty for
   rustle runs.
@@ -163,3 +198,7 @@
 - `GET /api/runs` no longer 500s when a run's log is encrypted — PnL
   computation now skips parsing (encrypted logs were previously handed
   straight to an adapter's `parse_line`, which expects plaintext). (#5)
+- Win rate is now scored once per flat-to-flat round trip per slot instead
+  of once per fill — a multi-fill trade (e.g. an opening fill followed by a
+  closing fill) was previously counted as two separate win/loss events
+  instead of one.

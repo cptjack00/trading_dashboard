@@ -9,6 +9,12 @@ contract. #9's process-start registry (`process_control.py`) writes and
 updates it directly. Malformed/incomplete manifests are skipped rather than
 raising, so one bad run (e.g. caught mid-write) can't take down the rest of
 the list.
+
+Alongside that, `iter_runs` also picks up runs the dashboard never launched
+itself: a directory with a trade log but no `run.json` (an operator ran
+rustle/ticktrader by hand). Those get a synthesized stand-in manifest so
+every other consumer (discovery, `find_run`, live-tracking) keeps working
+against one shape.
 """
 
 from __future__ import annotations
@@ -17,11 +23,14 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .process_control import is_pid_alive
 from .sources.base import PnL, is_encrypted
 from .sources.rustle import RustleAdapter
 from .sources.ticktrader import TickTraderTradeLogAdapter
 
 MANIFEST_NAME = "run.json"
+PID_FILE_NAME = "runner.pid"
+_TRADE_LOG_NAMES = {"rustle": "trade_log.jsonl", "ticktrader": "trade_log.csv"}
 
 
 @dataclass(frozen=True)
@@ -75,6 +84,82 @@ def iter_manifests(root: Path) -> list[tuple[Path, dict]]:
     return [(run_dir, manifest) for run_dir, manifest in pairs if manifest is not None]
 
 
+def _read_runner_pid(run_dir: Path) -> int | None:
+    pid_path = run_dir / PID_FILE_NAME
+    if not pid_path.is_file():
+        return None
+    try:
+        return int(pid_path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _manifestless_status(run_dir: Path) -> str:
+    """`unknown` is a fourth status alongside live/stopped/crashed/backtest: a
+    manifest-less run this process never launched has no exit code and no
+    operator-stop record to tell "stopped" from "crashed" apart, so a dead (or
+    never-recorded) PID reports `unknown` rather than guessing either."""
+    pid = _read_runner_pid(run_dir)
+    if pid is not None and is_pid_alive(pid):
+        return "live"
+    return "unknown"
+
+
+def _find_manifestless_run_dirs(root: Path, log_name: str) -> list[Path]:
+    """Depth-agnostic scan for directories holding `log_name` with no `run.json`
+    sibling - rustle nests two levels deep (`<mode>_<config>/<date>/`), ticktrader
+    one (`<prefix>-<timestamp>/`), so this walks until it finds a run rather than
+    assuming a fixed depth. Descent stops the moment a run dir is identified -
+    no nested runs-within-runs."""
+    if not root.is_dir():
+        return []
+    found: list[Path] = []
+
+    def _walk(current: Path) -> None:
+        if (current / MANIFEST_NAME).is_file():
+            return
+        if (current / log_name).is_file():
+            found.append(current)
+            return
+        for child in sorted(p for p in current.iterdir() if p.is_dir()):
+            _walk(child)
+
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        _walk(child)
+    return found
+
+
+def _synthesize_manifest(run_dir: Path, root: Path) -> dict:
+    run_id = str(run_dir.relative_to(root)).replace("/", "__")
+    try:
+        started_at = run_dir.stat().st_ctime
+    except OSError:
+        started_at = 0.0
+    return {
+        "run_id": run_id,
+        # ponytail: run_type is unknowable without a manifest - dashboard-launched
+        # backtests always carry one (they go through `--out`), so a manifest-less
+        # run is always treated as "live" here; revisit if that stops holding.
+        "run_type": "live",
+        "state": _manifestless_status(run_dir),
+        "started_at": started_at,
+        "ended_at": None,
+    }
+
+
+def iter_runs(root: Path, project: str) -> list[tuple[Path, dict]]:
+    """(run_dir, manifest) for every run under `root`: manifest-backed
+    (`iter_manifests`) plus manifest-less ones discovered by trade-log presence."""
+    pairs = iter_manifests(root)
+    seen_ids = {manifest["run_id"] for _, manifest in pairs}
+    for run_dir in _find_manifestless_run_dirs(root, _TRADE_LOG_NAMES[project]):
+        manifest = _synthesize_manifest(run_dir, root)
+        if manifest["run_id"] in seen_ids:
+            continue
+        pairs.append((run_dir, manifest))
+    return pairs
+
+
 def _pnl_or_locked(log_path: Path, adapter) -> list[PnL]:
     # An encrypted log with no key configured is never fed to an adapter -
     # `parse_line` expects plaintext and would raise on raw ciphertext bytes.
@@ -85,7 +170,7 @@ def _pnl_or_locked(log_path: Path, adapter) -> list[PnL]:
 
 def discover_rustle_runs(root: Path) -> list[RunSummary]:
     summaries = []
-    for run_dir, manifest in iter_manifests(root):
+    for run_dir, manifest in iter_runs(root, "rustle"):
         log_path = run_dir / "trade_log.jsonl"
         config_path = manifest.get("config_path")
         adapter = RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
@@ -106,7 +191,7 @@ def discover_rustle_runs(root: Path) -> list[RunSummary]:
 
 def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
     summaries = []
-    for run_dir, manifest in iter_manifests(root):
+    for run_dir, manifest in iter_runs(root, "ticktrader"):
         log_path = run_dir / "trade_log.csv"
         adapter = TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
         pnl = _pnl_or_locked(log_path, adapter)
@@ -142,7 +227,7 @@ def find_run(
     root = {"rustle": rustle_root, "ticktrader": ticktrader_root}.get(project)
     if root is None:
         return None
-    for run_dir, manifest in iter_manifests(root):
+    for run_dir, manifest in iter_runs(root, project):
         if manifest["run_id"] == run_id:
             return run_dir, manifest
     return None

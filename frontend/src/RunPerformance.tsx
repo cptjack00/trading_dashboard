@@ -1,20 +1,42 @@
+import { StepChart } from './charts'
+
 type PnLPoint = { ts: number; slot: string; realized: number; unrealized: number }
 type WinRatePoint = { ts: number; slot: string; wins: number; losses: number }
 type FillsPoint = { ts: number; slot: string; count: number }
+
+const SLOT_COLORS = ['var(--rustle)', 'var(--ticktrader)', 'var(--amber)', 'var(--phosphor)']
 
 function formatWinRate(wins: number, losses: number): string {
   const total = wins + losses
   return total === 0 ? '—' : `${((wins / total) * 100).toFixed(1)}%`
 }
 
+function FillsOverTime({ fillHistory }: { fillHistory: Record<string, FillsPoint[]> }) {
+  const slots = Object.keys(fillHistory).sort()
+  if (slots.length === 0) {
+    return <p className="overview-empty">No fills yet.</p>
+  }
+  return (
+    <StepChart
+      series={slots.map((slot, i) => ({
+        label: slot,
+        color: SLOT_COLORS[i % SLOT_COLORS.length],
+        points: fillHistory[slot].map((f) => ({ x: f.ts, y: f.count })),
+      }))}
+    />
+  )
+}
+
 export default function RunPerformance({
   pnl,
   winRates,
   fills,
+  fillHistory,
 }: {
   pnl: PnLPoint[]
   winRates: WinRatePoint[]
   fills: FillsPoint[]
+  fillHistory: Record<string, FillsPoint[]>
 }) {
   const slots = [...new Set([...pnl, ...winRates, ...fills].map((r) => r.slot))].sort()
   if (slots.length === 0) {
@@ -31,39 +53,49 @@ export default function RunPerformance({
   const totalFills = fills.reduce((sum, f) => sum + f.count, 0)
 
   return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>Slot</th>
-          <th>Win rate</th>
-          <th>PnL</th>
-          <th>Fills</th>
-        </tr>
-      </thead>
-      <tbody>
-        {slots.map((slot) => {
-          const p = pnlBySlot.get(slot)
-          const w = winRateBySlot.get(slot)
-          const f = fillsBySlot.get(slot)
-          const slotPnl = (p?.realized ?? 0) + (p?.unrealized ?? 0)
-          return (
-            <tr key={slot}>
-              <td>{slot}</td>
-              <td>{w ? formatWinRate(w.wins, w.losses) : '—'}</td>
-              <td className={slotPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{slotPnl.toFixed(2)}</td>
-              <td>{f?.count ?? 0}</td>
-            </tr>
-          )
-        })}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>{formatWinRate(totalWins, totalLosses)}</td>
-          <td className={totalPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{totalPnl.toFixed(2)}</td>
-          <td>{totalFills}</td>
-        </tr>
-      </tfoot>
-    </table>
+    <>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Slot</th>
+            <th>Win rate</th>
+            <th>PnL</th>
+            <th>Fills</th>
+          </tr>
+        </thead>
+        <tbody>
+          {slots.map((slot) => {
+            const p = pnlBySlot.get(slot)
+            const w = winRateBySlot.get(slot)
+            const f = fillsBySlot.get(slot)
+            const slotPnl = (p?.realized ?? 0) + (p?.unrealized ?? 0)
+            return (
+              <tr key={slot}>
+                <td>{slot}</td>
+                <td>{w ? formatWinRate(w.wins, w.losses) : '—'}</td>
+                <td className={slotPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{slotPnl.toFixed(2)}</td>
+                <td>{f?.count ?? 0}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td>{formatWinRate(totalWins, totalLosses)}</td>
+            <td className={totalPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{totalPnl.toFixed(2)}</td>
+            <td>{totalFills}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="eyebrow">Fills over time</span>
+        </div>
+        <div className="chart-pad">
+          <FillsOverTime fillHistory={fillHistory} />
+        </div>
+      </div>
+    </>
   )
 }

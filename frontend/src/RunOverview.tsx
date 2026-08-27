@@ -3,6 +3,7 @@ import type { Run } from './RunList'
 import RunPerformance from './RunPerformance'
 import RunMarket from './RunMarket'
 import RunLatency from './RunLatency'
+import { LineChart } from './charts'
 
 type EquityPoint = { ts: number; equity: number }
 type TradeRow = { ts: number; symbol: string; side: string; price: number; qty: number; slot: string | null }
@@ -31,6 +32,7 @@ type Overview = {
   health: HealthPoint[]
   symbol_prices: Record<string, PricePoint[]>
   channel_latency: Record<string, LatencySample[]>
+  fill_history: Record<string, FillsPoint[]>
 }
 
 type SSEDelta = {
@@ -42,6 +44,7 @@ type SSEDelta = {
   health: HealthPoint[]
   symbol_prices: Record<string, PricePoint[]>
   channel_latency: Record<string, LatencySample[]>
+  fill_history: Record<string, FillsPoint[]>
 }
 
 type Tab = 'overview' | 'performance' | 'market' | 'latency'
@@ -56,6 +59,7 @@ const TABS: { key: Tab; label: string }[] = [
 const EQUITY_LIMIT = 500
 const TRADE_LIMIT = 50
 const PRICE_LIMIT = 500
+const FILLS_HISTORY_LIMIT = 500 // matches live.py's FILLS_HISTORY_LIMIT
 
 function mergeLatestByKey<T>(current: T[], incoming: T[], keyOf: (item: T) => string): T[] {
   if (incoming.length === 0) return current
@@ -95,27 +99,10 @@ function mergeUncapped<T>(current: Record<string, T[]>, incoming: Record<string,
 }
 
 function EquityCurve({ points }: { points: EquityPoint[] }) {
-  if (points.length < 2) {
-    return <p className="overview-empty">Not enough data yet.</p>
-  }
-  const width = 600
-  const height = 160
-  const values = points.map((p) => p.equity)
-  const min = Math.min(...values)
-  const span = Math.max(...values) - min || 1
-  const step = width / (points.length - 1)
-  const path = points
-    .map((p, i) => {
-      const x = i * step
-      const y = height - ((p.equity - min) / span) * height
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
-    })
-    .join(' ')
-
   return (
-    <svg className="equity-curve" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} />
-    </svg>
+    <LineChart
+      series={[{ label: 'Equity', color: 'var(--accent)', fill: true, points: points.map((p) => ({ x: p.ts, y: p.equity })) }]}
+    />
   )
 }
 
@@ -164,32 +151,82 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
   )
 }
 
-function TradeTape({ trades }: { trades: TradeRow[] }) {
-  if (trades.length === 0) {
+const TRADES_PAGE_SIZE = 100
+const SCROLL_LOAD_THRESHOLD_PX = 40
+
+// `trades` is the live-updating recent tail (from /overview + SSE, capped at
+// TRADE_LIMIT); `older` holds pages fetched on demand as the operator scrolls
+// past what's already loaded, via GET .../trades?before=<ts>. Both stay
+// chronological (ascending ts) so `[...older, ...trades]` is one ordered list.
+function TradeTape({ project, runId, trades }: { project: string; runId: string; trades: TradeRow[] }) {
+  const [older, setOlder] = useState<TradeRow[]>([])
+  const [hasMore, setHasMore] = useState(true)
+  const [loading, setLoading] = useState(false)
+
+  // Reset the loaded-older-pages state when the run identity changes, without
+  // an effect: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [trackedRun, setTrackedRun] = useState(`${project}/${runId}`)
+  const runIdentity = `${project}/${runId}`
+  if (runIdentity !== trackedRun) {
+    setTrackedRun(runIdentity)
+    setOlder([])
+    setHasMore(true)
+  }
+
+  const all = [...older, ...trades]
+
+  async function loadMore() {
+    if (loading || !hasMore || all.length === 0) return
+    setLoading(true)
+    const oldestTs = all[0].ts
+    const res = await fetch(
+      `/api/runs/${project}/${runId}/trades?before=${oldestTs}&limit=${TRADES_PAGE_SIZE}`,
+    )
+    setLoading(false)
+    if (!res.ok) return
+    const page: TradeRow[] = await res.json()
+    if (page.length === 0) {
+      setHasMore(false)
+      return
+    }
+    setOlder((prev) => [...page, ...prev])
+  }
+
+  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_LOAD_THRESHOLD_PX) {
+      void loadMore()
+    }
+  }
+
+  if (all.length === 0) {
     return <p className="overview-empty">No trades yet.</p>
   }
-  const recent = [...trades].reverse()
+  const recent = [...all].reverse()
   return (
-    <table className="trade-tape">
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Side</th>
-          <th>Qty</th>
-          <th>Price</th>
-        </tr>
-      </thead>
-      <tbody>
-        {recent.map((t, i) => (
-          <tr key={i} className={`trade-row trade-row--${t.side}`}>
-            <td>{new Date(t.ts * 1000).toLocaleTimeString()}</td>
-            <td>{t.side.toUpperCase()}</td>
-            <td>{t.qty}</td>
-            <td>{t.price}</td>
+    <div className="trade-tape-scroll" onScroll={handleScroll}>
+      <table className="trade-tape">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Side</th>
+            <th>Qty</th>
+            <th>Price</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {recent.map((t, i) => (
+            <tr key={i} className={`trade-row trade-row--${t.side}`}>
+              <td>{new Date(t.ts * 1000).toLocaleTimeString()}</td>
+              <td>{t.side.toUpperCase()}</td>
+              <td>{t.qty}</td>
+              <td>{t.price}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {loading && <p className="overview-empty">Loading…</p>}
+    </div>
   )
 }
 
@@ -230,6 +267,7 @@ export default function RunOverview({ run }: { run: Run }) {
               health: mergeLatestByKey(prev.health, delta.health, (h) => h.component),
               symbol_prices: mergeCapped(prev.symbol_prices, delta.symbol_prices, PRICE_LIMIT),
               channel_latency: mergeUncapped(prev.channel_latency, delta.channel_latency),
+              fill_history: mergeCapped(prev.fill_history, delta.fill_history, FILLS_HISTORY_LIMIT),
             }
           : prev,
       )
@@ -251,7 +289,14 @@ export default function RunOverview({ run }: { run: Run }) {
       return <p className="overview-locked">🔒 encrypted — no key configured</p>
     }
     if (tab === 'performance') {
-      return <RunPerformance pnl={overview.pnl} winRates={overview.win_rates} fills={overview.fills} />
+      return (
+        <RunPerformance
+          pnl={overview.pnl}
+          winRates={overview.win_rates}
+          fills={overview.fills}
+          fillHistory={overview.fill_history}
+        />
+      )
     }
     if (tab === 'market') {
       return <RunMarket symbolPrices={overview.symbol_prices} />
@@ -271,7 +316,7 @@ export default function RunOverview({ run }: { run: Run }) {
             <span className="eyebrow">Trade tape</span>
           </div>
           <div className="tape-wrap">
-            <TradeTape trades={overview.trades} />
+            <TradeTape project={run.project} runId={run.run_id} trades={overview.trades} />
           </div>
         </div>
       </>

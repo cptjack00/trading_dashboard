@@ -65,6 +65,7 @@ class RustleAdapter(LogSourceAdapter):
         # refusing to render when a config can't be read.
         self._run_date = run_date or datetime.now().strftime("%Y%m%d")
         self._slot_realized: dict[str, float] = {}
+        self._slot_open_realized: dict[str, float] = {}
         self._slot_wins: dict[str, int] = {}
         self._slot_losses: dict[str, int] = {}
 
@@ -88,17 +89,22 @@ class RustleAdapter(LogSourceAdapter):
         into.trades.append(trade)
         into.add_price(symbol, PricePoint(ts=ts, price=row["trade_price"], trade=trade))
 
-        prior_realized = self._slot_realized.get(slot, 0.0)
         realized = row["pnl"]
         self._slot_realized[slot] = realized
         into.pnl.append(PnL(ts=ts, slot=slot, realized=realized, unrealized=0.0))
         into.equity.append(EquityPoint(ts=ts, equity=sum(self._slot_realized.values())))
 
-        delta = realized - prior_realized
-        if delta > 0:
-            self._slot_wins[slot] = self._slot_wins.get(slot, 0) + 1
-        elif delta < 0:
-            self._slot_losses[slot] = self._slot_losses.get(slot, 0) + 1
+        # A win/loss is scored once per round trip (flat -> flat), not per fill:
+        # an opening fill just moves the slot into a position, it doesn't realize
+        # a trade outcome on its own. `position == 0` is rustle's own flat marker.
+        if row["position"] == 0:
+            open_realized = self._slot_open_realized.get(slot, 0.0)
+            delta = realized - open_realized
+            if delta > 0:
+                self._slot_wins[slot] = self._slot_wins.get(slot, 0) + 1
+            elif delta < 0:
+                self._slot_losses[slot] = self._slot_losses.get(slot, 0) + 1
+            self._slot_open_realized[slot] = realized
         into.win_rates.append(
             WinRate(ts=ts, slot=slot, wins=self._slot_wins.get(slot, 0), losses=self._slot_losses.get(slot, 0))
         )

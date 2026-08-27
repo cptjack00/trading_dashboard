@@ -335,7 +335,7 @@ def test_run_overview_includes_performance_and_market_fields(settings, tmp_path)
                 "trade_price": 1.0,
                 "trade_side": "BUY",
                 "matched_volume": 1,
-                "position": 1,
+                "position": 0,
                 "action": "FILLED",
                 "pnl": 2.0,
             }
@@ -357,6 +357,79 @@ def test_run_overview_includes_performance_and_market_fields(settings, tmp_path)
     assert (win_rate["wins"], win_rate["losses"]) == (1, 0)
     assert body["fills"] == [{"ts": pnl["ts"], "slot": "s1", "count": 1}]
     assert body["symbol_prices"]["s1"][0]["price"] == 1.0  # no config_path - symbol falls back to slot_id
+
+
+def _filled_row_json(slot: str, timestamp: str, pnl: float) -> str:
+    return json.dumps(
+        {
+            "slot_id": slot,
+            "timestamp": timestamp,
+            "type": "CONTROL",
+            "best_bid": 9.9,
+            "best_ask": 10.1,
+            "spread": 0.2,
+            "trade_price": 10.0,
+            "trade_side": "BUY",
+            "matched_volume": 1,
+            "position": 1,
+            "action": "FILLED",
+            "pnl": pnl,
+        }
+    )
+
+
+def _write_run_with_many_trades(tmp_path: Path, *, count: int) -> None:
+    run_dir = tmp_path / "rustle-runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": "run-1", "run_type": "live", "state": "live", "started_at": 1.0, "ended_at": None})
+    )
+    rows = [_filled_row_json("s1", f"09:{i:02d}:00.000", float(i)) for i in range(count)]
+    (run_dir / "trade_log.jsonl").write_text("\n".join(rows) + "\n")
+
+
+def test_trades_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.get("/api/runs/rustle/run-1/trades")
+    assert resp.status_code == 401
+
+
+def test_trades_unknown_run_is_404(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/runs/rustle/nope/trades")
+    assert resp.status_code == 404
+
+
+def test_overview_trims_to_fifty_trades_but_full_history_is_pageable(settings, tmp_path):
+    _write_run_with_many_trades(tmp_path, count=60)
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.app.state.live_manager.poll_once()
+
+    overview = client.get("/api/runs/rustle/run-1/overview").json()
+    assert len(overview["trades"]) == 50  # unchanged first-paint shape
+
+    full_history = client.get("/api/runs/rustle/run-1/trades", params={"limit": 60}).json()
+    latest_page = client.get("/api/runs/rustle/run-1/trades", params={"limit": 10}).json()
+    assert len(full_history) == 60  # all 60 fills survive retention, not just the last 50
+    assert latest_page == full_history[-10:]
+
+
+def test_trades_endpoint_pages_before_a_timestamp(settings, tmp_path):
+    _write_run_with_many_trades(tmp_path, count=60)
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.app.state.live_manager.poll_once()
+
+    latest = client.get("/api/runs/rustle/run-1/trades", params={"limit": 60}).json()
+    cutoff = latest[30]["ts"]
+
+    page = client.get("/api/runs/rustle/run-1/trades", params={"before": cutoff, "limit": 10}).json()
+    assert [t["ts"] for t in page] == [t["ts"] for t in latest[20:30]]
 
 
 def _fake_binary(tmp_path: Path) -> Path:

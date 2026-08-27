@@ -12,7 +12,9 @@ def _write_manifest(run_dir: Path, **fields) -> None:
     (run_dir / "run.json").write_text(json.dumps(fields))
 
 
-def _filled_row(slot: str, timestamp: str, pnl: float, *, side: str = "BUY", price: float = 10.0, qty: float = 1.0) -> dict:
+def _filled_row(
+    slot: str, timestamp: str, pnl: float, *, side: str = "BUY", price: float = 10.0, qty: float = 1.0, position: int = 1
+) -> dict:
     return {
         "slot_id": slot,
         "timestamp": timestamp,
@@ -23,7 +25,7 @@ def _filled_row(slot: str, timestamp: str, pnl: float, *, side: str = "BUY", pri
         "trade_price": price,
         "trade_side": side,
         "matched_volume": qty,
-        "position": 1,
+        "position": position,
         "action": "FILLED",
         "pnl": pnl,
     }
@@ -150,7 +152,7 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     run_dir = root / "run-1"
     _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
     (run_dir / "trade_log.jsonl").write_text(
-        _rustle_trade_log(_filled_row("s1", "09:00:00.000", 1.0, price=10.0, side="BUY"))
+        _rustle_trade_log(_filled_row("s1", "09:00:00.000", 1.0, price=10.0, side="BUY", position=0))
     )
 
     manager = LiveIngestionManager(root, None)
@@ -160,7 +162,7 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     [pnl] = overview.pnl
     assert (pnl.slot, pnl.realized, pnl.unrealized) == ("s1", 1.0, 0.0)
     [win_rate] = overview.win_rates
-    assert (win_rate.wins, win_rate.losses) == (1, 0)  # 0 -> 1.0 is a win
+    assert (win_rate.wins, win_rate.losses) == (1, 0)  # flat -> flat, 0 -> 1.0 is a win
     [fill] = overview.fills
     assert fill.count == 1
     prices = overview.symbol_prices["s1"]  # no config_path in this manifest - symbol falls back to slot_id
@@ -169,7 +171,7 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     # A second fill for the same slot accumulates the fill count rather than
     # replacing it, and pnl/win-rate move to the latest snapshot.
     with (run_dir / "trade_log.jsonl").open("a") as f:
-        f.write(json.dumps(_filled_row("s1", "09:00:01.000", -2.0, price=9.0, side="SELL")) + "\n")
+        f.write(json.dumps(_filled_row("s1", "09:00:01.000", -2.0, price=9.0, side="SELL", position=0)) + "\n")
     manager.poll_once()
 
     overview = manager.get_overview("rustle", "run-1")
@@ -178,7 +180,7 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     [pnl] = overview.pnl
     assert pnl.realized == -2.0  # latest wins, not summed
     [win_rate] = overview.win_rates
-    assert (win_rate.wins, win_rate.losses) == (1, 1)  # second fill's delta (1.0 -> -2.0) is a loss
+    assert (win_rate.wins, win_rate.losses) == (1, 1)  # second round trip's delta (1.0 -> -2.0) is a loss
 
 
 def test_live_tracked_is_false_for_completed_runs(tmp_path: Path):
@@ -262,6 +264,91 @@ def test_ticktrader_completed_run_reads_latency_regardless_of_trade_log_encrypti
 
     assert overview.encrypted_locked is True
     assert overview.channel_latency["data"][0].mean == 3.0
+
+
+def test_trade_tape_retention_is_uncapped_past_fifty(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    rows = [_filled_row("s1", f"09:{i:02d}:00.000", float(i)) for i in range(60)]
+    (run_dir / "trade_log.jsonl").write_text(_rustle_trade_log(*rows))
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert len(overview.trades) == 60  # not capped at the old 50-trade limit
+
+
+def test_get_trades_pages_through_full_history(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    rows = [_filled_row("s1", f"09:{i:02d}:00.000", float(i)) for i in range(60)]
+    (run_dir / "trade_log.jsonl").write_text(_rustle_trade_log(*rows))
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    all_trades = manager.get_overview("rustle", "run-1").trades
+    cutoff = all_trades[30].ts
+
+    page = manager.get_trades("rustle", "run-1", before=cutoff, limit=10)
+
+    assert [t.ts for t in page] == [t.ts for t in all_trades[20:30]]
+
+
+def test_get_trades_without_before_returns_latest_page(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    rows = [_filled_row("s1", f"09:{i:02d}:00.000", float(i)) for i in range(60)]
+    (run_dir / "trade_log.jsonl").write_text(_rustle_trade_log(*rows))
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    all_trades = manager.get_overview("rustle", "run-1").trades
+    page = manager.get_trades("rustle", "run-1", before=None, limit=10)
+
+    assert [t.ts for t in page] == [t.ts for t in all_trades[-10:]]
+
+
+def test_get_trades_unknown_run_returns_none(tmp_path: Path):
+    manager = LiveIngestionManager(tmp_path / "rustle-runs", None)
+    assert manager.get_trades("rustle", "nope", before=None, limit=10) is None
+
+
+def test_fill_history_tracks_cumulative_count_per_slot_over_time(tmp_path: Path):
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "run-1"
+    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    (run_dir / "trade_log.jsonl").write_text(
+        _rustle_trade_log(
+            _filled_row("s1", "09:00:00.000", 1.0),
+            _filled_row("s1", "09:00:01.000", 2.0),
+            _filled_row("s2", "09:00:02.000", 3.0),
+        )
+    )
+
+    manager = LiveIngestionManager(root, None)
+    manager.poll_once()
+
+    overview = manager.get_overview("rustle", "run-1")
+    assert [f.count for f in overview.fill_history["s1"]] == [1, 2]
+    assert [f.count for f in overview.fill_history["s2"]] == [1]
+    # The latest-total table view is untouched by the new history tracking.
+    fills_by_slot = {f.slot: f.count for f in overview.fills}
+    assert fills_by_slot == {"s1": 2, "s2": 1}
+
+    with (run_dir / "trade_log.jsonl").open("a") as f:
+        f.write(json.dumps(_filled_row("s1", "09:00:03.000", 4.0)) + "\n")
+    manager.poll_once()
+
+    delta_queue = manager.subscribe("rustle", "run-1")
+    assert delta_queue is not None
+    overview = manager.get_overview("rustle", "run-1")
+    assert [f.count for f in overview.fill_history["s1"]] == [1, 2, 3]
 
 
 def test_ticktrader_live_run_uses_symbol_from_manifest(tmp_path: Path):

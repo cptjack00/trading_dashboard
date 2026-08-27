@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export type RunStatus = 'live' | 'stopped' | 'crashed' | 'backtest'
+export type RunStatus = 'live' | 'stopped' | 'crashed' | 'backtest' | 'unknown'
 
 export type Run = {
   run_id: string
