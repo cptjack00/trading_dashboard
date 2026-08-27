@@ -20,6 +20,7 @@ against one shape.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -147,12 +148,40 @@ def _synthesize_manifest(run_dir: Path, root: Path) -> dict:
     }
 
 
+def _start_of_today() -> float:
+    now = time.localtime()
+    return time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1))
+
+
+def _is_worth_tracking(run_dir: Path, log_path: Path) -> bool:
+    """A manifest-less run only surfaces if it's from today or still alive.
+
+    A project's runs root can hold months of completed runs (production trade
+    logs run tens to hundreds of MB each); without this filter every one of
+    them would be discovered and have its PnL re-parsed from scratch on every
+    `/api/runs` poll (~every 5s from the frontend) - fine for a handful of
+    dashboard-launched runs, not for real production log volumes. This check
+    is deliberately cheap (a stat + a pid check) so it never touches the
+    expensive log-parsing path for a run it's about to skip anyway.
+    """
+    try:
+        if log_path.stat().st_mtime >= _start_of_today():
+            return True
+    except OSError:
+        return False
+    return _manifestless_status(run_dir) == "live"
+
+
 def iter_runs(root: Path, project: str) -> list[tuple[Path, dict]]:
     """(run_dir, manifest) for every run under `root`: manifest-backed
-    (`iter_manifests`) plus manifest-less ones discovered by trade-log presence."""
+    (`iter_manifests`) plus manifest-less ones discovered by trade-log presence -
+    the latter filtered to today-or-still-live, see `_is_worth_tracking`."""
     pairs = iter_manifests(root)
     seen_ids = {manifest["run_id"] for _, manifest in pairs}
-    for run_dir in _find_manifestless_run_dirs(root, _TRADE_LOG_NAMES[project]):
+    log_name = _TRADE_LOG_NAMES[project]
+    for run_dir in _find_manifestless_run_dirs(root, log_name):
+        if not _is_worth_tracking(run_dir, run_dir / log_name):
+            continue
         manifest = _synthesize_manifest(run_dir, root)
         if manifest["run_id"] in seen_ids:
             continue

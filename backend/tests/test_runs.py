@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 from signal_deck.runs import discover_all_runs, discover_rustle_runs, discover_ticktrader_runs
@@ -241,6 +242,39 @@ def test_discover_rustle_runs_stops_descent_at_first_run_dir_found(tmp_path: Pat
     runs = discover_rustle_runs(root)
 
     assert [r.run_id for r in runs] == ["live_x__20260826"]
+
+
+def test_discover_rustle_runs_excludes_stale_manifestless_run(tmp_path: Path):
+    # A completed run from days ago shouldn't be discovered at all - large
+    # historical production logs would otherwise get re-parsed for PnL on
+    # every /api/runs poll, at real production log volumes (tens/hundreds of
+    # MB each, potentially hundreds of them) that's a severe perf regression.
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "straddle_v11" / "20260722"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "trade_log.jsonl"
+    log_path.write_text(_filled_row("s1", "09:00:00.000", 1.0) + "\n")
+    old = time.time() - 3 * 86400
+    os.utime(log_path, (old, old))
+
+    assert discover_rustle_runs(root) == []
+
+
+def test_discover_rustle_runs_keeps_stale_mtime_run_if_still_alive(tmp_path: Path):
+    # A genuinely still-running session shouldn't get excluded just because
+    # it's been quiet (no new fills) since before local midnight.
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "live_x" / "20260826"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "trade_log.jsonl"
+    log_path.write_text(_filled_row("s1", "09:00:00.000", 1.0) + "\n")
+    old = time.time() - 3 * 86400
+    os.utime(log_path, (old, old))
+    (run_dir / "runner.pid").write_text(str(os.getpid()))
+
+    [run] = discover_rustle_runs(root)
+
+    assert run.status == "live"
 
 
 def test_find_run_locates_manifestless_run(tmp_path: Path):

@@ -118,7 +118,12 @@
   process never launched has no exit code or stop record to tell them apart.
   The Stop button is hidden for `unknown` runs (no ownership to act on), and
   its run-list badge reads as a neutral dot rather than a live pulse or a
-  crash indicator.
+  crash indicator. Manifest-less discovery only surfaces a run from today or
+  still alive (a cheap mtime/pid check, before any log parsing) — a project's
+  runs root can hold months of completed sessions with multi-hundred-MB trade
+  logs each, and re-parsing all of them for PnL on every `/api/runs` poll
+  (~5s cadence) is a real production-scale problem this project hit directly
+  while testing against actual TickTrader-para/rustle log directories.
 - Interactive charts: replaced the hand-rolled inline-SVG `LineChart`/
   `BarChart` (`charts.tsx`) and `RunOverview`'s equity curve with
   `uPlot`-backed equivalents (same props shape, so callers needed no changes
