@@ -121,6 +121,45 @@ def test_discover_ticktrader_runs_reads_manifest_and_trade_log(tmp_path: Path):
     assert run.pnl == 2.0
 
 
+def _tt_csv(*pnls: float) -> str:
+    rows = [f"09:00:{i:02d}.000,TRADE,100.0,BUY,1,{pnl},0.0" for i, pnl in enumerate(pnls)]
+    return "\n".join(["timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl", *rows]) + "\n"
+
+
+def test_discover_ticktrader_runs_merges_multi_strategy_children_into_main(tmp_path: Path):
+    # TickTrader-para's multi-strategy launch convention: a "main" session dir
+    # (config.toml, runner.pid - its own trade_log.csv is header-only) plus one
+    # `{main}-{strategy}` sibling per strategy holding the real trades.
+    root = tmp_path / "tt-runs"
+    main_dir = root / "ticktrader-20260827-095011"
+    main_dir.mkdir(parents=True)
+    (main_dir / "trade_log.csv").write_text(_tt_csv())  # header only, no fills
+    (main_dir / "runner.pid").write_text(str(os.getpid()))
+
+    for strategy, pnl in [("comeback_v9", 10.0), ("gap_capture_v1", 2.0), ("spread_v2", 5.0)]:
+        child_dir = root / f"ticktrader-20260827-095011-{strategy}"
+        child_dir.mkdir(parents=True)
+        (child_dir / "trade_log.csv").write_text(_tt_csv(pnl))
+
+    runs = discover_ticktrader_runs(root)
+
+    assert [r.run_id for r in runs] == ["ticktrader-20260827-095011"]
+    assert runs[0].status == "live"
+    assert runs[0].pnl == 17.0
+
+
+def test_discover_ticktrader_runs_standalone_run_is_unaffected(tmp_path: Path):
+    root = tmp_path / "tt-runs"
+    run_dir = root / "ticktrader-multi-20260827-084701"
+    run_dir.mkdir(parents=True)
+    (run_dir / "trade_log.csv").write_text(_tt_csv(9.0))
+
+    [run] = discover_ticktrader_runs(root)
+
+    assert run.run_id == "ticktrader-multi-20260827-084701"
+    assert run.pnl == 9.0
+
+
 def test_backtest_status_wins_over_state():
     from signal_deck.runs import _status
 

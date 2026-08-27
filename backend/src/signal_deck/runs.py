@@ -218,12 +218,44 @@ def discover_rustle_runs(root: Path) -> list[RunSummary]:
     return summaries
 
 
+def _group_ticktrader_children(run_dirs: list[Path]) -> dict[Path, list[Path]]:
+    """TickTrader-para's own convention (mirrored from its dashboard's
+    `reader.py`, `_find_session_csvs`): a multi-strategy launch writes one
+    "main" session dir (`config.toml`, `runner.pid`, session-level telemetry -
+    its own `trade_log.csv` is just a header row, no fills) plus one
+    `{main}-{strategy}` sibling dir per strategy slot holding the actual
+    trades. Group each child dir under its main dir's Path, so a launch shows
+    as one run-list entry (with pnl summed across the family) instead of one
+    entry per strategy - a single-strategy launch has no such siblings and is
+    unaffected."""
+    by_name = {d.name: d for d in run_dirs}
+    children_by_parent: dict[Path, list[Path]] = {}
+    for name, path in by_name.items():
+        if "-" not in name:
+            continue
+        parent = by_name.get(name.rsplit("-", 1)[0])
+        if parent is not None:
+            children_by_parent.setdefault(parent, []).append(path)
+    return children_by_parent
+
+
+def _ticktrader_pnl(log_path: Path) -> float:
+    adapter = TickTraderTradeLogAdapter(log_path, symbol="")
+    return _latest_pnl_total(_pnl_or_locked(log_path, adapter))
+
+
 def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
+    pairs = iter_runs(root, "ticktrader")
+    children_by_parent = _group_ticktrader_children([run_dir for run_dir, _ in pairs])
+    child_dirs = {child for kids in children_by_parent.values() for child in kids}
+
     summaries = []
-    for run_dir, manifest in iter_runs(root, "ticktrader"):
-        log_path = run_dir / "trade_log.csv"
-        adapter = TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
-        pnl = _pnl_or_locked(log_path, adapter)
+    for run_dir, manifest in pairs:
+        if run_dir in child_dirs:
+            continue
+        pnl_total = _ticktrader_pnl(run_dir / "trade_log.csv")
+        for child_dir in children_by_parent.get(run_dir, []):
+            pnl_total += _ticktrader_pnl(child_dir / "trade_log.csv")
         summaries.append(
             RunSummary(
                 run_id=manifest["run_id"],
@@ -232,7 +264,7 @@ def discover_ticktrader_runs(root: Path) -> list[RunSummary]:
                 status=_status(run_type=manifest["run_type"], state=manifest["state"]),
                 started_at=manifest["started_at"],
                 ended_at=manifest.get("ended_at"),
-                pnl=_latest_pnl_total(pnl),
+                pnl=pnl_total,
             )
         )
     return summaries

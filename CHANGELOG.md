@@ -124,6 +124,12 @@
   logs each, and re-parsing all of them for PnL on every `/api/runs` poll
   (~5s cadence) is a real production-scale problem this project hit directly
   while testing against actual TickTrader-para/rustle log directories.
+  Ticktrader's own multi-strategy launch convention (mirrored from its
+  dashboard's `reader.py`) writes one "main" session dir per launch — its
+  own `trade_log.csv` is header-only — plus one `{main}-{strategy}` sibling
+  dir per strategy slot holding the real trades; those siblings are grouped
+  under the main dir (summing pnl across the family) so a multi-strategy
+  launch shows as one run-list entry instead of one per strategy.
 - Interactive charts: replaced the hand-rolled inline-SVG `LineChart`/
   `BarChart` (`charts.tsx`) and `RunOverview`'s equity curve with
   `uPlot`-backed equivalents (same props shape, so callers needed no changes
