@@ -276,3 +276,8 @@
   work the live-ingestion loop already does incrementally every second for
   live runs. A live run's PnL now comes straight from `LiveIngestionManager`'s
   already-tailed state instead of a from-scratch reparse.
+- A manually-launched (manifest-less) run kept showing as "live" in the run
+  list forever once its `runner.pid` PID number got reused by an unrelated
+  process — `is_pid_alive` is just `os.kill(pid, 0)`, which can't tell a
+  reused PID from the original one. Manifest-less runs older than 24h are no
+  longer considered "worth tracking" regardless of PID liveness.

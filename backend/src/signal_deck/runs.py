@@ -132,12 +132,16 @@ def _find_manifestless_run_dirs(root: Path, log_name: str) -> list[Path]:
     return found
 
 
+def _run_started_at(run_dir: Path) -> float:
+    try:
+        return run_dir.stat().st_ctime
+    except OSError:
+        return 0.0
+
+
 def _synthesize_manifest(run_dir: Path, root: Path) -> dict:
     run_id = str(run_dir.relative_to(root)).replace("/", "__")
-    try:
-        started_at = run_dir.stat().st_ctime
-    except OSError:
-        started_at = 0.0
+    started_at = _run_started_at(run_dir)
     return {
         "run_id": run_id,
         # ponytail: run_type is unknowable without a manifest - dashboard-launched
@@ -155,8 +159,12 @@ def _start_of_today() -> float:
     return time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1))
 
 
+_MAX_LIVE_AGE_SECONDS = 24 * 3600
+
+
 def _is_worth_tracking(run_dir: Path, log_path: Path) -> bool:
-    """A manifest-less run only surfaces if it's from today or still alive.
+    """A manifest-less run only surfaces if it's from today, or it's under 24h
+    old and still alive.
 
     A project's runs root can hold months of completed runs (production trade
     logs run tens to hundreds of MB each); without this filter every one of
@@ -165,11 +173,19 @@ def _is_worth_tracking(run_dir: Path, log_path: Path) -> bool:
     dashboard-launched runs, not for real production log volumes. This check
     is deliberately cheap (a stat + a pid check) so it never touches the
     expensive log-parsing path for a run it's about to skip anyway.
+
+    The 24h cap on the "still alive" branch exists because `is_pid_alive` is
+    just `os.kill(pid, 0)` - it can't tell a PID number that got reused by an
+    unrelated process from the original one. Without a ceiling, a run whose
+    `runner.pid` PID happens to get reused days later would resurrect as
+    "live" forever.
     """
     try:
         if log_path.stat().st_mtime >= _start_of_today():
             return True
     except OSError:
+        return False
+    if time.time() - _run_started_at(run_dir) > _MAX_LIVE_AGE_SECONDS:
         return False
     return _manifestless_status(run_dir) == "live"
 

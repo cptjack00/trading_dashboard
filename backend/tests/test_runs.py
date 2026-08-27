@@ -316,6 +316,24 @@ def test_discover_rustle_runs_keeps_stale_mtime_run_if_still_alive(tmp_path: Pat
     assert run.status == "live"
 
 
+def test_discover_rustle_runs_excludes_old_manifestless_run_even_if_pid_alive(tmp_path: Path, monkeypatch):
+    # is_pid_alive is just os.kill(pid, 0) - it can't tell a PID number reused
+    # by an unrelated process from the original one. A run older than 24h
+    # must not resurrect as "live" just because something else now holds
+    # that PID.
+    root = tmp_path / "rustle-runs"
+    run_dir = root / "live_x" / "20260826"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "trade_log.jsonl"
+    log_path.write_text(_filled_row("s1", "09:00:00.000", 1.0) + "\n")
+    old = time.time() - 3 * 86400
+    os.utime(log_path, (old, old))
+    (run_dir / "runner.pid").write_text(str(os.getpid()))  # alive, but stale
+    monkeypatch.setattr("signal_deck.runs._run_started_at", lambda _run_dir: old)
+
+    assert discover_rustle_runs(root) == []
+
+
 def test_find_run_locates_manifestless_run(tmp_path: Path):
     from signal_deck.runs import find_run
 
