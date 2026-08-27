@@ -12,6 +12,25 @@ def _write_manifest(run_dir: Path, **fields) -> None:
     (run_dir / "run.json").write_text(json.dumps(fields))
 
 
+def _filled_row(slot: str, timestamp: str, pnl: float) -> str:
+    return json.dumps(
+        {
+            "slot_id": slot,
+            "timestamp": timestamp,
+            "type": "CONTROL",
+            "best_bid": 10.0,
+            "best_ask": 10.2,
+            "spread": 0.2,
+            "trade_price": 10.1,
+            "trade_side": "BUY",
+            "matched_volume": 1,
+            "position": 1,
+            "action": "FILLED",
+            "pnl": pnl,
+        }
+    )
+
+
 def test_discover_rustle_runs_reads_manifest_and_totals_pnl(tmp_path: Path):
     root = tmp_path / "rustle-runs"
     run_dir = root / "run-1"
@@ -23,12 +42,12 @@ def test_discover_rustle_runs_reads_manifest_and_totals_pnl(tmp_path: Path):
         started_at=1000.0,
         ended_at=None,
     )
-    (run_dir / "events.jsonl").write_text(
+    (run_dir / "trade_log.jsonl").write_text(
         "\n".join(
             [
-                json.dumps({"type": "pnl", "ts": 1, "slot": "s1", "realized": 10.0, "unrealized": 1.0}),
-                json.dumps({"type": "pnl", "ts": 2, "slot": "s1", "realized": 12.0, "unrealized": 0.5}),
-                json.dumps({"type": "pnl", "ts": 3, "slot": "s2", "realized": 5.0}),
+                _filled_row("s1", "09:00:00.000", 10.0),
+                _filled_row("s1", "09:00:01.000", 12.5),
+                _filled_row("s2", "09:00:02.000", 5.0),
             ]
         )
         + "\n"
@@ -112,7 +131,7 @@ def test_discover_rustle_runs_with_encrypted_log_lists_run_with_zero_pnl(tmp_pat
     root = tmp_path / "rustle-runs"
     run_dir = root / "run-1"
     _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
-    (run_dir / "events.jsonl").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\nnot-json-or-anything\n")
+    (run_dir / "trade_log.jsonl").write_bytes(LogSourceAdapter.MAGIC_HEADER + b"\nnot-json-or-anything\n")
 
     [run] = discover_rustle_runs(root)  # must not raise despite unparseable ciphertext
 
@@ -130,7 +149,7 @@ def test_discover_all_runs_combines_both_projects_and_ignores_unset_roots(tmp_pa
         started_at=1.0,
         ended_at=None,
     )
-    (rustle_root / "run-1" / "events.jsonl").write_text("")
+    (rustle_root / "run-1" / "trade_log.jsonl").write_text("")
 
     runs = discover_all_runs(rustle_root, None)
 

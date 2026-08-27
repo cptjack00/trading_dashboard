@@ -50,10 +50,23 @@ class Settings:
         )
         self.stop_log_file = Path(os.environ.get("SIGNAL_DECK_STOP_LOG_FILE", "stop_events.log"))
 
-        # ponytail: optional like the runs dirs above - a project with no binary
-        # configured just can't launch runs from the dashboard yet.
-        self.rustle_binary = _optional_path("SIGNAL_DECK_RUSTLE_BINARY")
-        self.ticktrader_binary = _optional_path("SIGNAL_DECK_TICKTRADER_BINARY")
+        # ponytail: optional like the runs dirs above - a project with no
+        # command configured for a given run type just can't launch that run
+        # type from the dashboard yet.
+        #
+        # Each *_CMD holds every token up to (and, where the engine expects
+        # it, including) its own --config flag - e.g. "cargo run -p tt-replay
+        # --bin tt-replay --release -- --config" or "python -m ticktrader
+        # backtest --config". The config path is always appended as the final
+        # argv token, never string-substituted, so it never needs quoting.
+        # cwd is per-project (not per run type) because both of a project's
+        # run types are invoked from the same repo checkout.
+        self.rustle_cwd = _optional_path("SIGNAL_DECK_RUSTLE_CWD")
+        self.rustle_backtest_cmd = os.environ.get("SIGNAL_DECK_RUSTLE_BACKTEST_CMD")
+        self.rustle_live_cmd = os.environ.get("SIGNAL_DECK_RUSTLE_LIVE_CMD")
+        self.ticktrader_cwd = _optional_path("SIGNAL_DECK_TICKTRADER_CWD")
+        self.ticktrader_backtest_cmd = os.environ.get("SIGNAL_DECK_TICKTRADER_BACKTEST_CMD")
+        self.ticktrader_live_cmd = os.environ.get("SIGNAL_DECK_TICKTRADER_LIVE_CMD")
 
 
 def _optional_path(env_var: str) -> Path | None:

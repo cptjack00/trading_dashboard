@@ -52,7 +52,7 @@ def config_file(tmp_path: Path) -> Path:
 def test_start_run_spawns_process_and_writes_manifest(registry, fake_binary, config_file, tmp_path):
     runs_root = tmp_path / "runs"
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=runs_root
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=runs_root
     )
 
     assert run["project"] == "rustle"
@@ -71,7 +71,7 @@ def test_start_run_spawns_process_and_writes_manifest(registry, fake_binary, con
 def test_start_run_persists_registry_across_instances(registry, fake_binary, config_file, tmp_path):
     runs_root = tmp_path / "runs"
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=runs_root
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=runs_root
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
 
@@ -95,14 +95,15 @@ def test_start_run_missing_config_raises(registry, fake_binary, tmp_path):
             project="rustle",
             run_type="live",
             config_path=str(tmp_path / "nope.toml"),
-            binary=str(fake_binary),
+            cmd_prefix=str(fake_binary),
+            cwd=tmp_path,
             runs_root=tmp_path / "runs",
         )
 
 
 def test_stop_run_sends_sigterm_to_tracked_pid(registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
     assert is_pid_alive(pid)
@@ -119,7 +120,7 @@ def test_stop_run_unknown_run_raises(registry):
 
 def test_stop_run_twice_rapidly_sends_at_most_one_sigterm(monkeypatch, registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
 
@@ -147,7 +148,7 @@ def test_stop_run_concurrent_calls_send_at_most_one_sigterm(monkeypatch, registr
     import threading
 
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
 
@@ -179,7 +180,7 @@ def test_stop_run_concurrent_calls_send_at_most_one_sigterm(monkeypatch, registr
 
 def test_stop_run_writes_durable_record_for_every_request(registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
 
@@ -201,7 +202,8 @@ def test_reconcile_marks_crashed_process_as_crashed(registry, tmp_path, config_f
         project="rustle",
         run_type="live",
         config_path=str(config_file),
-        binary=str(crashing_binary),
+        cmd_prefix=str(crashing_binary),
+        cwd=tmp_path,
         runs_root=tmp_path / "runs",
     )
     run_dir = tmp_path / "runs" / run["run_id"]
@@ -215,7 +217,7 @@ def test_reconcile_marks_crashed_process_as_crashed(registry, tmp_path, config_f
 
 def test_reconcile_marks_operator_stopped_process_as_stopped(registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     run_dir = tmp_path / "runs" / run["run_id"]
     registry.stop_run(project="rustle", run_id=run["run_id"])
@@ -229,7 +231,7 @@ def test_reconcile_marks_operator_stopped_process_as_stopped(registry, fake_bina
 
 def test_reconcile_leaves_still_live_run_untouched(registry, fake_binary, config_file, tmp_path):
     run = registry.start_run(
-        project="rustle", run_type="live", config_path=str(config_file), binary=str(fake_binary), runs_root=tmp_path / "runs"
+        project="rustle", run_type="live", config_path=str(config_file), cmd_prefix=str(fake_binary), cwd=tmp_path, runs_root=tmp_path / "runs"
     )
     pid = _registered_pid(registry, "rustle", run["run_id"])
     run_dir = tmp_path / "runs" / run["run_id"]

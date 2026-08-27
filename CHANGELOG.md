@@ -113,6 +113,51 @@
   channel," and "Operator intervention" from rustle's own `CONTEXT.md`, now
   that tt-console is superseded. (#11)
 
+### Changed
+
+- New Run flow: replaced each project's single configured binary
+  (`SIGNAL_DECK_RUSTLE_BINARY` / `SIGNAL_DECK_TICKTRADER_BINARY`, always
+  invoked as `<binary> --config <path>`) with a launch command per
+  `(project, run_type)` plus a `cwd` per project —
+  `SIGNAL_DECK_{RUSTLE,TICKTRADER}_{BACKTEST,LIVE}_CMD` and
+  `SIGNAL_DECK_{RUSTLE,TICKTRADER}_CWD`. A project's live and backtest runs
+  can be genuinely different binaries with different argv shapes (rustle:
+  `cargo run -p tt-replay --bin tt-replay --release -- --config <path>` for
+  backtest vs. `cargo run -p tt-live-runner --bin tt-live-runner --release --
+  --config <path>` for live — both rustle binaries require an explicit
+  `--config` flag, neither accepts a bare positional path), and cargo/
+  `python -m` invocations need to run from inside the target repo, not this
+  process's own working directory. The config path is always appended as
+  the final argv token after `shlex.split`ing the configured command, never
+  string-substituted, so a path with spaces can't reshape the command.
+- New Run flow (rustle only): launches now also pass `--out
+  <run_dir>/trade_log.jsonl`, forcing rustle's own trade log into this run's
+  directory instead of its native `<mode>_<config-stem>/<date>/` path, which
+  the dashboard has no way to resolve on its own — the date is picked
+  internally by rustle from the config, not passed in. A config with a
+  multi-date range can't be launched from the dashboard this way (`--out`
+  only accepts a single resolved date); use a single-date config for
+  dashboard-launched runs.
+- `sources/rustle.py`'s `RustleAdapter` now parses rustle's real
+  `trade_log.jsonl` schema (`slot_id, timestamp, type, best_bid, best_ask,
+  spread, trade_price, trade_side, matched_volume, position, action, pnl` —
+  `crates/tt-engine/src/trade_log_schema.rs`) instead of a schema that never
+  matched any rustle output. `type` is always `"CONTROL"` in production and
+  carries no signal; only `action == "FILLED"` rows are fills, and `pnl` is
+  each slot's running realized-pnl snapshot, not a per-fill delta (both
+  verified against a real run's output and tt-replay's own printed
+  per-lane summary). Since the schema has no `symbol` column, a fill's
+  instrument is resolved from the run's own config TOML
+  (`[[multi_symbol.slots]] slot_label -> config.symbol`), read once at
+  adapter construction from a new `config_path` field the process registry
+  now writes into `run.json`; the bare `HH:MM:SS.mmm` timestamps are
+  likewise anchored to the config's `from_date`. Win rate is derived
+  per-slot from each fill's realized-pnl delta (up vs. down since the
+  slot's last fill). Known gap: rustle's health/latency telemetry
+  (`health_log.jsonl`, the live-only `:9464/metrics` Prometheus scrape)
+  isn't wired up — the Latency tab and live health checks stay empty for
+  rustle runs.
+
 ### Fixed
 
 - `GET /api/runs` no longer 500s when a run's log is encrypted — PnL

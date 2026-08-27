@@ -1,41 +1,95 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from signal_deck.sources.rustle import RustleAdapter
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rustle_sample.jsonl"
+CONFIG = Path(__file__).parent / "fixtures" / "rustle_sample_config.toml"
 
 
-def test_normalizes_all_event_types(tmp_path: Path):
-    path = tmp_path / "rustle.jsonl"
+def _epoch(timestamp: str) -> float:
+    return datetime.strptime(f"20260101 {timestamp}", "%Y%m%d %H:%M:%S.%f").timestamp()
+
+
+def test_ignores_non_filled_rows_and_maps_filled_rows(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
     path.write_bytes(FIXTURE.read_bytes())
-    adapter = RustleAdapter(path)
+    adapter = RustleAdapter(path, config_path=CONFIG)
 
     result = adapter.tail()
 
-    assert len(result.status) == 1
-    assert result.status[0].run_id == "run-redacted-1"
+    # 4 rows in the fixture, only 3 are action=="FILLED" - the OPEN row
+    # produces no trade/pnl/fill/equity/win_rate entry at all.
+    assert len(result.trades) == 3
 
-    assert len(result.trades) == 1
-    trade = result.trades[0]
-    assert trade.symbol == "XYZ-PERP"
-    assert trade.side == "buy"
-    assert trade.price == 10.5
+    first = result.trades[0]
+    assert first.ts == _epoch("09:00:01.200")
+    assert first.symbol == "XYZ-PERP"  # resolved via config, not the slot_id
+    assert first.side == "buy"
+    assert first.price == 10.1
+    assert first.qty == 2
+    assert first.slot == "s1"
+
+    assert result.trades[1].side == "sell"
+    assert result.trades[2].symbol == "ABC-PERP"
 
     prices = result.symbol_prices["XYZ-PERP"]
     assert len(prices) == 2
-    assert prices[0].trade == trade  # trade line produces a marked price point
-    assert prices[1].trade is None  # plain price line has no marker
+    assert prices[0].trade == first
 
-    assert result.equity[0].equity == 500.25
-    assert result.health[0].component == "ws-feed"
-    assert result.win_rates[0].wins == 3
-    assert result.pnl[0].realized == 12.5
-    assert result.fills[0].count == 4
 
-    assert result.channel_latency["ws"][0].p99 == 9.4
-    assert result.channel_latency["api"][0].p999 == 75.0
+def test_pnl_is_the_running_per_slot_snapshot_not_a_delta(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path, config_path=CONFIG).tail()
+
+    assert [p.realized for p in result.pnl] == [5.0, 3.0, 1.5]
+    assert all(p.unrealized == 0.0 for p in result.pnl)
+
+
+def test_equity_is_the_cross_slot_running_total(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path, config_path=CONFIG).tail()
+
+    # s1: 5.0, then updates to 3.0 (not 5.0+3.0 - pnl is a snapshot); s2 adds 1.5.
+    assert [e.equity for e in result.equity] == [5.0, 3.0, 4.5]
+
+
+def test_win_rate_derived_from_realized_pnl_delta_between_fills(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path, config_path=CONFIG).tail()
+
+    by_slot_final = {}
+    for w in result.win_rates:
+        by_slot_final[w.slot] = w
+    # s1: first fill 0 -> 5.0 (win), second fill 5.0 -> 3.0 (loss).
+    assert by_slot_final["s1"].wins == 1
+    assert by_slot_final["s1"].losses == 1
+    # s2: first fill 0 -> 1.5 (win).
+    assert by_slot_final["s2"].wins == 1
+    assert by_slot_final["s2"].losses == 0
+
+
+def test_fills_increment_by_one_per_filled_row(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path, config_path=CONFIG).tail()
+
+    assert [f.count for f in result.fills] == [1, 1, 1]
+    assert [f.slot for f in result.fills] == ["s1", "s1", "s2"]
+
+
+def test_missing_config_falls_back_to_slot_id_as_symbol(tmp_path: Path):
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path).tail()  # no config_path
+
+    assert result.trades[0].symbol == "s1"
+    assert result.trades[2].symbol == "s2"
 
 
 def test_chunked_feed_matches_single_feed(tmp_path: Path):
@@ -43,38 +97,36 @@ def test_chunked_feed_matches_single_feed(tmp_path: Path):
 
     whole_path = tmp_path / "whole.jsonl"
     whole_path.write_bytes(content)
-    whole_result = RustleAdapter(whole_path).tail()
+    whole_result = RustleAdapter(whole_path, config_path=CONFIG).tail()
 
     chunked_path = tmp_path / "chunked.jsonl"
     chunked_path.write_bytes(b"")
-    chunked_adapter = RustleAdapter(chunked_path)
+    chunked_adapter = RustleAdapter(chunked_path, config_path=CONFIG)
     midpoint = len(content) // 2
     combined_trades = []
-    combined_prices: list = []
     for chunk in (content[:midpoint], content[midpoint:]):
         with chunked_path.open("ab") as f:
             f.write(chunk)
         step = chunked_adapter.tail()
         combined_trades.extend(step.trades)
-        combined_prices.extend(step.symbol_prices.get("XYZ-PERP", []))
 
     assert combined_trades == whole_result.trades
-    assert combined_prices == whole_result.symbol_prices["XYZ-PERP"]
 
 
 def test_line_cut_mid_write_is_not_parsed_until_complete(tmp_path: Path):
     lines = FIXTURE.read_bytes().splitlines(keepends=True)
-    path = tmp_path / "rustle.jsonl"
+    path = tmp_path / "trade_log.jsonl"
     path.write_bytes(b"")
-    adapter = RustleAdapter(path)
+    adapter = RustleAdapter(path, config_path=CONFIG)
 
-    first_line = lines[0]
+    # The fixture's 2nd line is the first FILLED row.
+    first_two = lines[0] + lines[1]
     with path.open("ab") as f:
-        f.write(first_line[: len(first_line) // 2])  # cut mid-write, no trailing \n
+        f.write(first_two[: len(first_two) // 2])  # cut mid-write, no trailing \n
     mid_write = adapter.tail()
-    assert mid_write.status == []
+    assert mid_write.trades == []
 
     with path.open("ab") as f:
-        f.write(first_line[len(first_line) // 2 :])  # write completes
+        f.write(first_two[len(first_two) // 2 :])  # write completes
     completed = adapter.tail()
-    assert len(completed.status) == 1
+    assert len(completed.trades) == 1

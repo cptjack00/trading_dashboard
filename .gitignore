@@ -18,6 +18,7 @@ checkpoints/
 backend/.venv/
 backend/.pytest_cache/
 backend/config_roots.json
+backend/process_registry.json
 
 # local secrets
 *.env

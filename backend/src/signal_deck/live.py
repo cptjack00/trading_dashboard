@@ -47,12 +47,13 @@ RunKey = tuple[str, str]  # (project, run_id)
 
 
 def _log_path(run_dir: Path, project: str) -> Path:
-    return run_dir / ("events.jsonl" if project == "rustle" else "trade_log.csv")
+    return run_dir / "trade_log.jsonl" if project == "rustle" else run_dir / "trade_log.csv"
 
 
 def _make_adapter(log_path: Path, project: str, manifest: dict) -> LogSourceAdapter:
     if project == "rustle":
-        return RustleAdapter(log_path)
+        config_path = manifest.get("config_path")
+        return RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
     return TickTraderTradeLogAdapter(log_path, symbol=manifest.get("symbol", ""))
 
 

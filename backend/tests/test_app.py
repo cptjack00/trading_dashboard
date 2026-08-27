@@ -91,8 +91,24 @@ def test_runs_aggregates_discovered_runs(settings, tmp_path):
             }
         )
     )
-    (run_dir / "events.jsonl").write_text(
-        json.dumps({"type": "pnl", "ts": 1, "slot": "s1", "realized": 3.5}) + "\n"
+    (run_dir / "trade_log.jsonl").write_text(
+        json.dumps(
+            {
+                "slot_id": "s1",
+                "timestamp": "09:00:00.000",
+                "type": "CONTROL",
+                "best_bid": 9.9,
+                "best_ask": 10.1,
+                "spread": 0.2,
+                "trade_price": 10.0,
+                "trade_side": "BUY",
+                "matched_volume": 1,
+                "position": 1,
+                "action": "FILLED",
+                "pnl": 3.5,
+            }
+        )
+        + "\n"
     )
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
 
@@ -115,9 +131,27 @@ def _write_run(tmp_path: Path, *, project: str, run_id: str, state: str) -> Path
     (run_dir / "run.json").write_text(
         json.dumps({"run_id": run_id, "run_type": "live", "state": state, "started_at": 1.0, "ended_at": None})
     )
-    log_name = "events.jsonl" if project == "rustle" else "trade_log.csv"
+    log_name = "trade_log.jsonl" if project == "rustle" else "trade_log.csv"
     if project == "rustle":
-        (run_dir / log_name).write_text(json.dumps({"type": "equity", "ts": 1, "equity": 7.5}) + "\n")
+        (run_dir / log_name).write_text(
+            json.dumps(
+                {
+                    "slot_id": "s1",
+                    "timestamp": "09:00:00.000",
+                    "type": "CONTROL",
+                    "best_bid": 9.9,
+                    "best_ask": 10.1,
+                    "spread": 0.2,
+                    "trade_price": 10.0,
+                    "trade_side": "BUY",
+                    "matched_volume": 1,
+                    "position": 1,
+                    "action": "FILLED",
+                    "pnl": 7.5,
+                }
+            )
+            + "\n"
+        )
     else:
         (run_dir / log_name).write_text(
             "timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl\n"
@@ -153,7 +187,8 @@ def test_run_overview_live_run_after_a_poll_tick(settings, tmp_path):
     body = resp.json()
     assert body["status"] == "live"
     assert body["encrypted_locked"] is False
-    assert body["equity"] == [{"ts": 1, "equity": 7.5}]
+    [equity_point] = body["equity"]
+    assert equity_point["equity"] == 7.5
 
 
 def test_run_stream_requires_live_run(settings, tmp_path):
@@ -276,7 +311,11 @@ def test_config_scan_empty_when_no_roots_configured(settings, tmp_path):
     assert resp.json() == {"configs": []}
 
 
-def test_run_overview_includes_performance_market_and_latency_fields(settings, tmp_path):
+def test_run_overview_includes_performance_and_market_fields(settings, tmp_path):
+    # rustle's health/latency telemetry (health_log.jsonl, the live-only
+    # :9464/metrics scrape) isn't wired up yet - see CHANGELOG - so this only
+    # covers what trade_log.jsonl actually drives: pnl, win rate, fills, and
+    # per-symbol matched prices.
     run_dir = tmp_path / "rustle-runs" / "run-1"
     run_dir.mkdir(parents=True)
     (run_dir / "run.json").write_text(
@@ -284,18 +323,22 @@ def test_run_overview_includes_performance_market_and_latency_fields(settings, t
             {"run_id": "run-1", "run_type": "live", "state": "live", "started_at": 1.0, "ended_at": None}
         )
     )
-    (run_dir / "events.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "pnl", "ts": 1, "slot": "s1", "realized": 2.0, "unrealized": 0.0}),
-                json.dumps({"type": "winrate", "ts": 1, "slot": "s1", "wins": 1, "losses": 0}),
-                json.dumps({"type": "fill", "ts": 1, "slot": "s1", "count": 1}),
-                json.dumps(
-                    {"type": "trade", "ts": 1, "symbol": "BTC", "side": "buy", "price": 1.0, "qty": 1.0, "slot": "s1"}
-                ),
-                json.dumps({"type": "latency", "ts": 1, "channel": "ws", "mean": 4.0, "p99": 6.0, "p999": 8.0}),
-                json.dumps({"type": "health", "ts": 1, "component": "ws", "ok": True, "detail": None}),
-            ]
+    (run_dir / "trade_log.jsonl").write_text(
+        json.dumps(
+            {
+                "slot_id": "s1",
+                "timestamp": "09:00:00.000",
+                "type": "CONTROL",
+                "best_bid": 0.9,
+                "best_ask": 1.1,
+                "spread": 0.2,
+                "trade_price": 1.0,
+                "trade_side": "BUY",
+                "matched_volume": 1,
+                "position": 1,
+                "action": "FILLED",
+                "pnl": 2.0,
+            }
         )
         + "\n"
     )
@@ -308,12 +351,12 @@ def test_run_overview_includes_performance_market_and_latency_fields(settings, t
     body = resp.json()
 
     assert body["live_tracked"] is True
-    assert body["pnl"] == [{"ts": 1, "slot": "s1", "realized": 2.0, "unrealized": 0.0}]
-    assert body["win_rates"] == [{"ts": 1, "slot": "s1", "wins": 1, "losses": 0}]
-    assert body["fills"] == [{"ts": 1, "slot": "s1", "count": 1}]
-    assert body["health"] == [{"ts": 1, "component": "ws", "ok": True, "detail": None}]
-    assert body["symbol_prices"]["BTC"][0]["price"] == 1.0
-    assert body["channel_latency"]["ws"][0]["mean"] == 4.0
+    [pnl] = body["pnl"]
+    assert (pnl["slot"], pnl["realized"], pnl["unrealized"]) == ("s1", 2.0, 0.0)
+    [win_rate] = body["win_rates"]
+    assert (win_rate["wins"], win_rate["losses"]) == (1, 0)
+    assert body["fills"] == [{"ts": pnl["ts"], "slot": "s1", "count": 1}]
+    assert body["symbol_prices"]["s1"][0]["price"] == 1.0  # no config_path - symbol falls back to slot_id
 
 
 def _fake_binary(tmp_path: Path) -> Path:
@@ -348,7 +391,10 @@ def test_start_run_rejects_unconfigured_project(settings, tmp_path):
 
 def test_start_run_rejects_invalid_run_type(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
-    settings.rustle_binary = _fake_binary(tmp_path)
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
     client = make_client(settings, tmp_path)
     login(client)
     resp = client.post("/api/runs", json={"project": "rustle", "run_type": "bogus", "config": "x"})
@@ -357,7 +403,10 @@ def test_start_run_rejects_invalid_run_type(settings, tmp_path):
 
 def test_start_run_missing_config_rejected(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
-    settings.rustle_binary = _fake_binary(tmp_path)
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
     settings.config_roots_file = tmp_path / "config_roots.json"
     configs_dir = tmp_path / "configs"
     configs_dir.mkdir()
@@ -373,7 +422,10 @@ def test_start_run_missing_config_rejected(settings, tmp_path):
 
 def test_start_run_rejects_config_outside_registered_roots(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
-    settings.rustle_binary = _fake_binary(tmp_path)
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
     settings.config_roots_file = tmp_path / "config_roots.json"
     (tmp_path / "configs").mkdir()
     outside = tmp_path / "outside" / "strategy.toml"
@@ -391,7 +443,10 @@ def test_start_run_rejects_config_outside_registered_roots(settings, tmp_path):
 
 def test_start_run_spawns_process_and_appears_in_run_list(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
-    settings.rustle_binary = _fake_binary(tmp_path)
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
     settings.process_registry_file = tmp_path / "process_registry.json"
     settings.stop_log_file = tmp_path / "stop_events.log"
     settings.config_roots_file = tmp_path / "config_roots.json"
@@ -436,7 +491,10 @@ def test_stop_run_unknown_run_is_404(settings, tmp_path):
 
 def test_stop_run_sends_sigterm_and_appears_stopped_after_reconcile(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
-    settings.rustle_binary = _fake_binary(tmp_path)
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
     settings.process_registry_file = tmp_path / "process_registry.json"
     settings.stop_log_file = tmp_path / "stop_events.log"
     settings.config_roots_file = tmp_path / "config_roots.json"

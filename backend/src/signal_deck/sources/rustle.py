@@ -1,111 +1,106 @@
-"""Adapter for rustle's trade/latency logs: one JSON object per line.
+"""Adapter for rustle's `trade_log.jsonl`.
 
-Byte-offset tailing and marker/decoder handling live in `LogSourceAdapter`;
-this module only maps a decoded, complete JSON line onto the shared model.
+Frozen 12-column schema (`crates/tt-engine/src/trade_log_schema.rs`):
+`slot_id, timestamp, type, best_bid, best_ask, spread, trade_price,
+trade_side, matched_volume, position, action, pnl`. `type` is always
+`"CONTROL"` in production (rustle's own doc comment on the schema module
+confirms this - order-lifecycle rows, not raw market ticks), so it carries
+no useful signal here; `action` is the real discriminator. Only
+`action == "FILLED"` rows represent an actual fill - `OPEN`/`REPLACED`/
+`CANCELLED` rows are order-lifecycle noise with an unchanged `pnl` (verified
+against a real run: `pnl` only moves on `FILLED` rows). `pnl` itself is each
+slot's running realized-pnl snapshot as of that row, not a per-fill delta -
+confirmed by cross-checking a slot's last `FILLED` row against tt-replay's
+own printed per-lane summary for that slot.
+
+There is no `symbol` column, so a fill's instrument comes from the run's own
+config TOML (`[[multi_symbol.slots]] slot_label -> config.symbol`), read
+once when the adapter is constructed. `timestamp` is a bare `HH:MM:SS.mmm`
+with no date, so the config's `from_date` anchors it to a real epoch time -
+this only works for the single-date runs the New Run flow launches (backtest
+launches pass `--out`, which itself only accepts a single resolved date).
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+import tomllib
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from .base import (
-    EquityPoint,
-    Fills,
-    HealthSample,
-    LatencySample,
-    LogSourceAdapter,
-    ParsedLog,
-    PnL,
-    PricePoint,
-    RunStatus,
-    Trade,
-    WinRate,
-)
+from .base import EquityPoint, Fills, LogSourceAdapter, ParsedLog, PnL, PricePoint, Trade, WinRate
+
+
+def _load_slot_symbols(config_path: Path) -> dict[str, str]:
+    try:
+        data = tomllib.loads(config_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    slots = data.get("multi_symbol", {}).get("slots", [])
+    return {
+        slot["slot_label"]: slot["config"]["symbol"]
+        for slot in slots
+        if "slot_label" in slot and "symbol" in slot.get("config", {})
+    }
+
+
+def _load_run_date(config_path: Path) -> str | None:
+    try:
+        data = tomllib.loads(config_path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    date = data.get("from_date")
+    return date if isinstance(date, str) else None
 
 
 class RustleAdapter(LogSourceAdapter):
+    def __init__(self, path: Path, *, config_path: Path | None = None, **kwargs: Any) -> None:
+        super().__init__(path, **kwargs)
+        self._slot_symbols = _load_slot_symbols(config_path) if config_path else {}
+        run_date = _load_run_date(config_path) if config_path else None
+        # Fallback: today, in whatever timezone this process runs in - wrong
+        # calendar date for a historical backtest, but keeps the run usable
+        # (relative time ordering within the run is still correct) instead of
+        # refusing to render when a config can't be read.
+        self._run_date = run_date or datetime.now().strftime("%Y%m%d")
+        self._slot_realized: dict[str, float] = {}
+        self._slot_wins: dict[str, int] = {}
+        self._slot_losses: dict[str, int] = {}
+
+    def _epoch(self, timestamp: str) -> float:
+        dt = datetime.strptime(f"{self._run_date} {timestamp}", "%Y%m%d %H:%M:%S.%f")
+        return dt.timestamp()
+
     def parse_line(self, line: bytes, into: ParsedLog) -> None:
         text = line.strip()
         if not text:
             return
-        event: dict[str, Any] = json.loads(text)
-        event_type: str = event.get("type", "")
-        handler = self._HANDLERS.get(event_type)
-        if handler is None:
+        row: dict[str, Any] = json.loads(text)
+        if row.get("action") != "FILLED":
             return
-        handler(self, event, into)
 
-    def _handle_status(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.status.append(
-            RunStatus(
-                run_id=event["run_id"],
-                started_at=event["started_at"],
-                updated_at=event["updated_at"],
-                state=event["state"],
-            )
-        )
+        slot: str = row["slot_id"]
+        ts = self._epoch(row["timestamp"])
+        symbol: str = self._slot_symbols.get(slot, slot)
 
-    def _handle_trade(self, event: dict[str, Any], into: ParsedLog) -> None:
-        trade = Trade(
-            ts=event["ts"],
-            symbol=event["symbol"],
-            side=event["side"],
-            price=event["price"],
-            qty=event["qty"],
-            slot=event.get("slot"),
-        )
+        trade = Trade(ts=ts, symbol=symbol, side=row["trade_side"].lower(), price=row["trade_price"], qty=row["matched_volume"], slot=slot)
         into.trades.append(trade)
-        into.add_price(trade.symbol, PricePoint(ts=trade.ts, price=trade.price, trade=trade))
+        into.add_price(symbol, PricePoint(ts=ts, price=row["trade_price"], trade=trade))
 
-    def _handle_price(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.add_price(event["symbol"], PricePoint(ts=event["ts"], price=event["price"]))
+        prior_realized = self._slot_realized.get(slot, 0.0)
+        realized = row["pnl"]
+        self._slot_realized[slot] = realized
+        into.pnl.append(PnL(ts=ts, slot=slot, realized=realized, unrealized=0.0))
+        into.equity.append(EquityPoint(ts=ts, equity=sum(self._slot_realized.values())))
 
-    def _handle_equity(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.equity.append(EquityPoint(ts=event["ts"], equity=event["equity"]))
-
-    def _handle_health(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.health.append(
-            HealthSample(
-                ts=event["ts"],
-                component=event["component"],
-                ok=event["ok"],
-                detail=event.get("detail"),
-            )
-        )
-
-    def _handle_winrate(self, event: dict[str, Any], into: ParsedLog) -> None:
+        delta = realized - prior_realized
+        if delta > 0:
+            self._slot_wins[slot] = self._slot_wins.get(slot, 0) + 1
+        elif delta < 0:
+            self._slot_losses[slot] = self._slot_losses.get(slot, 0) + 1
         into.win_rates.append(
-            WinRate(ts=event["ts"], slot=event["slot"], wins=event["wins"], losses=event["losses"])
+            WinRate(ts=ts, slot=slot, wins=self._slot_wins.get(slot, 0), losses=self._slot_losses.get(slot, 0))
         )
 
-    def _handle_pnl(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.pnl.append(
-            PnL(
-                ts=event["ts"],
-                slot=event["slot"],
-                realized=event["realized"],
-                unrealized=event.get("unrealized", 0.0),
-            )
-        )
-
-    def _handle_fill(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.fills.append(Fills(ts=event["ts"], slot=event["slot"], count=event["count"]))
-
-    def _handle_latency(self, event: dict[str, Any], into: ParsedLog) -> None:
-        into.add_latency(
-            event["channel"],
-            LatencySample(ts=event["ts"], mean=event["mean"], p99=event["p99"], p999=event["p999"]),
-        )
-
-    _HANDLERS: dict[str, Callable[["RustleAdapter", dict[str, Any], ParsedLog], None]] = {
-        "status": _handle_status,
-        "trade": _handle_trade,
-        "price": _handle_price,
-        "equity": _handle_equity,
-        "health": _handle_health,
-        "winrate": _handle_winrate,
-        "pnl": _handle_pnl,
-        "fill": _handle_fill,
-        "latency": _handle_latency,
-    }
+        into.fills.append(Fills(ts=ts, slot=slot, count=1))

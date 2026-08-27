@@ -135,7 +135,19 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
             raise HTTPException(status_code=404, detail="unknown project")
 
     _RUNS_ROOTS = {"rustle": lambda: settings.rustle_runs_dir, "ticktrader": lambda: settings.ticktrader_runs_dir}
-    _BINARIES = {"rustle": lambda: settings.rustle_binary, "ticktrader": lambda: settings.ticktrader_binary}
+    _CWDS = {"rustle": lambda: settings.rustle_cwd, "ticktrader": lambda: settings.ticktrader_cwd}
+    _CMDS = {
+        ("rustle", "backtest"): lambda: settings.rustle_backtest_cmd,
+        ("rustle", "live"): lambda: settings.rustle_live_cmd,
+        ("ticktrader", "backtest"): lambda: settings.ticktrader_backtest_cmd,
+        ("ticktrader", "live"): lambda: settings.ticktrader_live_cmd,
+    }
+    # rustle's `--out <path>` forces its own trade log into this run's own
+    # directory instead of rustle's native `<mode>_<config-stem>/<date>/`
+    # convention, which `runs.py`/`live.py` have no way to resolve on their
+    # own (the date is picked internally by rustle, not passed in). ticktrader
+    # has no equivalent flag wired up yet.
+    _OUTPUT_FLAGS = {"rustle": "--out", "ticktrader": None}
 
     def _config_is_registered(project: str, config_path: str) -> bool:
         # A launchable config must come from one of the project's own scanned
@@ -153,9 +165,12 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
         if body.run_type not in ("live", "backtest"):
             raise HTTPException(status_code=400, detail="run_type must be 'live' or 'backtest'")
         runs_root = _RUNS_ROOTS[body.project]()
-        binary = _BINARIES[body.project]()
-        if runs_root is None or binary is None:
-            raise HTTPException(status_code=400, detail=f"{body.project} is not configured to launch runs")
+        cwd = _CWDS[body.project]()
+        cmd_prefix = _CMDS[(body.project, body.run_type)]()
+        if runs_root is None or cwd is None or cmd_prefix is None:
+            raise HTTPException(
+                status_code=400, detail=f"{body.project} is not configured to launch {body.run_type} runs"
+            )
         if not _config_is_registered(body.project, body.config):
             raise HTTPException(status_code=400, detail="config is not under a registered config root")
         try:
@@ -163,8 +178,10 @@ def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIS
                 project=body.project,
                 run_type=body.run_type,
                 config_path=body.config,
-                binary=str(binary),
+                cmd_prefix=cmd_prefix,
+                cwd=cwd,
                 runs_root=runs_root,
+                output_flag=_OUTPUT_FLAGS[body.project],
             )
         except FileNotFoundError:
             raise HTTPException(status_code=400, detail="config file not found")

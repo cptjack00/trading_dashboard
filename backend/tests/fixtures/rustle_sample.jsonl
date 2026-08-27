@@ -1,10 +1,4 @@
-{"type":"status","run_id":"run-redacted-1","started_at":1000.0,"updated_at":1000.5,"state":"running"}
-{"type":"trade","ts":1000.1,"symbol":"XYZ-PERP","side":"buy","price":10.5,"qty":2.0,"slot":"s1"}
-{"type":"price","ts":1000.2,"symbol":"XYZ-PERP","price":10.6}
-{"type":"equity","ts":1000.3,"equity":500.25}
-{"type":"health","ts":1000.4,"component":"ws-feed","ok":true}
-{"type":"winrate","ts":1000.5,"slot":"s1","wins":3,"losses":1}
-{"type":"pnl","ts":1000.6,"slot":"s1","realized":12.5,"unrealized":-1.0}
-{"type":"fill","ts":1000.7,"slot":"s1","count":4}
-{"type":"latency","ts":1000.8,"channel":"ws","mean":2.1,"p99":9.4,"p999":20.0}
-{"type":"latency","ts":1000.9,"channel":"api","mean":5.5,"p99":30.2,"p999":75.0}
+{"slot_id":"s1","timestamp":"09:00:00.100","type":"CONTROL","best_bid":10.0,"best_ask":10.2,"spread":0.2,"trade_price":10.1,"trade_side":"BUY","matched_volume":0,"position":0,"action":"OPEN","pnl":0}
+{"slot_id":"s1","timestamp":"09:00:01.200","type":"CONTROL","best_bid":10.0,"best_ask":10.2,"spread":0.2,"trade_price":10.1,"trade_side":"BUY","matched_volume":2,"position":1,"action":"FILLED","pnl":5.0}
+{"slot_id":"s1","timestamp":"09:00:02.300","type":"CONTROL","best_bid":9.9,"best_ask":10.1,"spread":0.2,"trade_price":9.8,"trade_side":"SELL","matched_volume":2,"position":0,"action":"FILLED","pnl":3.0}
+{"slot_id":"s2","timestamp":"09:00:03.400","type":"CONTROL","best_bid":20.0,"best_ask":20.2,"spread":0.2,"trade_price":20.1,"trade_side":"BUY","matched_volume":1,"position":1,"action":"FILLED","pnl":1.5}

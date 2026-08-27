@@ -86,8 +86,10 @@ def _pnl_or_locked(log_path: Path, adapter) -> list[PnL]:
 def discover_rustle_runs(root: Path) -> list[RunSummary]:
     summaries = []
     for run_dir, manifest in iter_manifests(root):
-        log_path = run_dir / "events.jsonl"
-        pnl = _pnl_or_locked(log_path, RustleAdapter(log_path))
+        log_path = run_dir / "trade_log.jsonl"
+        config_path = manifest.get("config_path")
+        adapter = RustleAdapter(log_path, config_path=Path(config_path) if config_path else None)
+        pnl = _pnl_or_locked(log_path, adapter)
         summaries.append(
             RunSummary(
                 run_id=manifest["run_id"],

@@ -36,8 +36,12 @@ def test_process_control_settings_default_unconfigured(monkeypatch):
     monkeypatch.setenv("SIGNAL_DECK_SECRET", "s")
     monkeypatch.setenv("SIGNAL_DECK_HOST", "100.64.0.1")
     settings = Settings()
-    assert settings.rustle_binary is None
-    assert settings.ticktrader_binary is None
+    assert settings.rustle_cwd is None
+    assert settings.rustle_backtest_cmd is None
+    assert settings.rustle_live_cmd is None
+    assert settings.ticktrader_cwd is None
+    assert settings.ticktrader_backtest_cmd is None
+    assert settings.ticktrader_live_cmd is None
     assert str(settings.process_registry_file) == "process_registry.json"
     assert str(settings.stop_log_file) == "stop_events.log"
 
@@ -45,8 +49,16 @@ def test_process_control_settings_default_unconfigured(monkeypatch):
 def test_process_control_settings_from_env(monkeypatch):
     monkeypatch.setenv("SIGNAL_DECK_SECRET", "s")
     monkeypatch.setenv("SIGNAL_DECK_HOST", "100.64.0.1")
-    monkeypatch.setenv("SIGNAL_DECK_RUSTLE_BINARY", "/opt/rustle/tt-live-runner")
-    monkeypatch.setenv("SIGNAL_DECK_TICKTRADER_BINARY", "/opt/ticktrader/run.py")
+    monkeypatch.setenv("SIGNAL_DECK_RUSTLE_CWD", "/opt/rustle")
+    monkeypatch.setenv("SIGNAL_DECK_RUSTLE_BACKTEST_CMD", "cargo run -p tt-replay --bin tt-replay --release -- --config")
+    monkeypatch.setenv("SIGNAL_DECK_RUSTLE_LIVE_CMD", "cargo run -p tt-live-runner --bin tt-live-runner --release")
+    monkeypatch.setenv("SIGNAL_DECK_TICKTRADER_CWD", "/opt/ticktrader")
+    monkeypatch.setenv("SIGNAL_DECK_TICKTRADER_BACKTEST_CMD", "python -m ticktrader backtest --config")
+    monkeypatch.setenv("SIGNAL_DECK_TICKTRADER_LIVE_CMD", "python -m ticktrader live --config")
     settings = Settings()
-    assert str(settings.rustle_binary) == "/opt/rustle/tt-live-runner"
-    assert str(settings.ticktrader_binary) == "/opt/ticktrader/run.py"
+    assert str(settings.rustle_cwd) == "/opt/rustle"
+    assert settings.rustle_backtest_cmd == "cargo run -p tt-replay --bin tt-replay --release -- --config"
+    assert settings.rustle_live_cmd == "cargo run -p tt-live-runner --bin tt-live-runner --release"
+    assert str(settings.ticktrader_cwd) == "/opt/ticktrader"
+    assert settings.ticktrader_backtest_cmd == "python -m ticktrader backtest --config"
+    assert settings.ticktrader_live_cmd == "python -m ticktrader live --config"

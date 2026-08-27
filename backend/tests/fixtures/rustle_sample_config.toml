@@ -1,0 +1,15 @@
+from_date = "20260101"
+
+[multi_symbol]
+
+[[multi_symbol.slots]]
+slot_label = "s1"
+
+  [multi_symbol.slots.config]
+  symbol = "XYZ-PERP"
+
+[[multi_symbol.slots]]
+slot_label = "s2"
+
+  [multi_symbol.slots.config]
+  symbol = "ABC-PERP"

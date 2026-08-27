@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import threading
@@ -102,8 +103,10 @@ class ProcessRegistry:
         project: str,
         run_type: str,
         config_path: str,
-        binary: str,
+        cmd_prefix: str,
+        cwd: Path,
         runs_root: Path,
+        output_flag: str | None = None,
     ) -> dict:
         if not Path(config_path).is_file():
             raise FileNotFoundError(config_path)
@@ -114,16 +117,36 @@ class ProcessRegistry:
         started_at = time.time()
         _write_manifest(
             run_dir,
-            {"run_id": run_id, "run_type": run_type, "state": "live", "started_at": started_at, "ended_at": None},
+            {
+                "run_id": run_id,
+                "run_type": run_type,
+                "state": "live",
+                "started_at": started_at,
+                "ended_at": None,
+                "config_path": config_path,
+            },
         )
+
+        # The config path is always the next argv token after shlex-splitting
+        # the fixed prefix - never string-substituted into it - so a path
+        # with spaces or shell metacharacters can't reshape the command.
+        # Different engines want it in different places (rustle backtest
+        # wants a trailing `--config <path>`, ticktrader wants a bare
+        # trailing positional) - that's baked into cmd_prefix.
+        #
+        # `output_flag`, when the engine has one (rustle's `--out`), forces
+        # its own log output into this run's own directory instead of
+        # whatever path convention it'd otherwise pick - `runs.py`/`live.py`
+        # only ever look for a run's log inside `run_dir`.
+        argv = shlex.split(cmd_prefix) + [str(config_path)]
+        if output_flag is not None:
+            argv += [output_flag, str(run_dir / "trade_log.jsonl")]
 
         # The child inherits its own duplicated copy of the fd at Popen() time,
         # so the parent's handle can (and should) close right away rather than
         # staying open, unused, for the run's entire lifetime.
         with (run_dir / "process.log").open("wb") as log_file:
-            proc = subprocess.Popen(
-                [binary, "--config", str(config_path)], stdout=log_file, stderr=subprocess.STDOUT
-            )
+            proc = subprocess.Popen(argv, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT)
 
         key = _key(project, run_id)
         with self._lock:
