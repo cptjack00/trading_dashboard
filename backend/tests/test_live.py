@@ -410,8 +410,8 @@ def test_ticktrader_multi_strategy_run_merges_child_trade_logs(tmp_path: Path):
         (child_dir / "trade_log.csv").write_text(
             "\n".join(
                 [
-                    "slot_id,timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl",
-                    f"{strategy}_1,09:00:01.000,TRADE,{price},BUY,1,{pnl},0.0",
+                    "slot_id,timestamp,type,trade_price,trade_side,matched_volume,action,pnl,unrealized_pnl",
+                    f"{strategy}_1,09:00:01.000,FILL,{price},BUY,1,FILLED,{pnl},0.0",
                 ]
             )
             + "\n"
@@ -436,8 +436,8 @@ def test_ticktrader_live_run_uses_symbol_from_manifest(tmp_path: Path):
     (run_dir / "trade_log.csv").write_text(
         "\n".join(
             [
-                "timestamp,type,trade_price,trade_side,matched_volume,pnl,unrealized_pnl",
-                "09:00:01.000,TRADE,100.1,BUY,5,2.0,0.0",
+                "timestamp,type,trade_price,trade_side,matched_volume,action,pnl,unrealized_pnl",
+                "09:00:01.000,FILL,100.1,BUY,5,FILLED,2.0,0.0",
             ]
         )
         + "\n"

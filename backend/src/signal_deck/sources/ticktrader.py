@@ -96,24 +96,33 @@ class TickTraderTradeLogAdapter(LogSourceAdapter):
 
         # ponytail: trade_log.csv carries no independent quote/tick stream, only
         # TRADE/FILL rows - so every matched-price point this adapter emits also
-        # carries a trade marker. A Market-tab "price movement" line built from
-        # this adapter is 1:1 with its own trade markers, not movement between
-        # fills; add a quote-tick handler here if trade_log.csv ever gains one.
+        # comes from a row that's a candidate trade marker (see `is_execution`
+        # below); add a quote-tick handler here if trade_log.csv ever gains one.
         trade_price = row.get("trade_price")
         if row.get("type") in ("TRADE", "FILL") and trade_price:
-            qty = float(row.get("matched_volume") or 0.0)
-            trade = Trade(
-                ts=ts,
-                symbol=self._symbol,
-                side=(row.get("trade_side") or "").lower(),
-                price=float(trade_price),
-                qty=qty,
-                slot=slot,
-            )
-            into.trades.append(trade)
-            into.add_price(self._symbol, PricePoint(ts=ts, price=trade.price, trade=trade))
-            if qty:
-                into.fills.append(Fills(ts=ts, slot=slot, count=int(qty)))
+            # A bare `type=="TRADE"` row is TickTrader-para's own public market-trade
+            # print (pinetree_stream.py: "Trade (match) event - pinetree does not
+            # report trade side", hence `trade_side` always "UNKNOWN" and `pnl` always
+            # unchanged) - not an own-account fill. Only `type=="FILL"` or a populated
+            # `action` (BUY/SELL/FILLED) means this row is our own execution.
+            action = (row.get("action") or "").strip().upper()
+            is_execution = row.get("type") == "FILL" or action in ("BUY", "SELL") or "FILLED" in action
+            price = float(trade_price)
+            trade = None
+            if is_execution:
+                qty = float(row.get("matched_volume") or 0.0)
+                trade = Trade(
+                    ts=ts,
+                    symbol=self._symbol,
+                    side=(row.get("trade_side") or "").lower(),
+                    price=price,
+                    qty=qty,
+                    slot=slot,
+                )
+                into.trades.append(trade)
+                if qty:
+                    into.fills.append(Fills(ts=ts, slot=slot, count=int(qty)))
+            into.add_price(self._symbol, PricePoint(ts=ts, price=price, trade=trade))
 
 
 class TickTraderLatencyAdapter(LogSourceAdapter):

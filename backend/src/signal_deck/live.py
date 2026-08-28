@@ -69,13 +69,18 @@ class _MergingAdapter:
 
     def __init__(self, adapters: list[LogSourceAdapter]) -> None:
         self._adapters = adapters
+        # Running per-slot realized+unrealized total across *every* source file,
+        # for `equity` below - each adapter's own `parsed.equity` is only a
+        # running sum of that one file's own slots, so trusting it here would
+        # let a later-processed file's stale total silently overwrite an
+        # earlier one's real movement whenever both tick in the same second.
+        self._slot_total: dict[str, float] = {}
 
     def tail(self) -> ParsedLog:
         merged = ParsedLog()
         for adapter in self._adapters:
             parsed = adapter.tail()
             merged.trades.extend(parsed.trades)
-            merged.equity.extend(parsed.equity)
             merged.status.extend(parsed.status)
             merged.health.extend(parsed.health)
             merged.win_rates.extend(parsed.win_rates)
@@ -85,6 +90,13 @@ class _MergingAdapter:
                 merged.symbol_prices.setdefault(symbol, []).extend(points)
             for channel, samples in parsed.channel_latency.items():
                 merged.channel_latency.setdefault(channel, []).extend(samples)
+        # Recompute equity from the merged, time-ordered pnl stream (slot ids are
+        # strategy-namespaced, so summing across files here is safe) instead of
+        # each adapter's own per-file points, which land in per-file blocks, not
+        # real time order.
+        for entry in sorted(merged.pnl, key=lambda p: p.ts):
+            self._slot_total[entry.slot] = entry.realized + entry.unrealized
+            merged.equity.append(EquityPoint(ts=entry.ts, equity=sum(self._slot_total.values())))
         return merged
 
 

@@ -349,3 +349,19 @@
   that in place of the polled value for that one run only, falling back to
   the poll once the run stops being live or its tab is closed. Run
   discovery itself is unaffected and still polls every 60s.
+- `TickTraderTradeLogAdapter` counted every `type=="TRADE"` row as one of
+  our own fills, but pinetree's stream emits that type for its own public
+  market-trade prints too (trade side always `"UNKNOWN"`, PnL unchanged) —
+  a busy market inflated the fills/trades count and win-rate denominator
+  with prints that were never our executions. Only `type=="FILL"` or a
+  populated `action` of `BUY`/`SELL`/`FILLED` is now treated as our own
+  fill; every row (execution or not) still feeds the Market tab's price
+  series.
+- A multi-strategy ticktrader run's equity curve could silently regress:
+  `_MergingAdapter.tail()` concatenated each source file's own running
+  `equity` total in per-file processing order rather than real time order,
+  so whichever file happened to be tailed last that tick would overwrite
+  the merged total with its own file-local sum, discarding the other
+  files' contributions. Equity is now recomputed from the merged,
+  time-ordered pnl stream — a running per-slot realized+unrealized total
+  summed across every source file on each new point.
