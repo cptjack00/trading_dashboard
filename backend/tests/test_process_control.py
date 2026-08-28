@@ -89,6 +89,33 @@ def test_start_run_persists_registry_across_instances(registry, fake_binary, con
             os.kill(pid, signal.SIGKILL)
 
 
+def test_start_run_with_config_content_writes_and_launches_used_config_copy(
+    registry, fake_binary, config_file, tmp_path
+):
+    runs_root = tmp_path / "runs"
+    run = registry.start_run(
+        project="rustle",
+        run_type="live",
+        config_path=str(config_file),
+        cmd_prefix=str(fake_binary),
+        cwd=tmp_path,
+        runs_root=runs_root,
+        config_content="name = 'edited'\n",
+    )
+
+    run_dir = runs_root / run["run_id"]
+    used_config = run_dir / "used_config.toml"
+    assert used_config.read_text() == "name = 'edited'\n"
+    assert config_file.read_text() == "name = 'test'\n"
+
+    pid = _registered_pid(registry, "rustle", run["run_id"])
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_text()
+        assert str(used_config) in cmdline
+    finally:
+        os.kill(pid, signal.SIGKILL)
+
+
 def test_start_run_missing_config_raises(registry, fake_binary, tmp_path):
     with pytest.raises(FileNotFoundError):
         registry.start_run(

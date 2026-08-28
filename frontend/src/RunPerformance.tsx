@@ -7,6 +7,45 @@ function formatWinRate(wins: number, losses: number): string {
   return total === 0 ? '—' : `${((wins / total) * 100).toFixed(1)}% (${wins}-${losses})`
 }
 
+function OpenPositions({ pnl, winRates }: { pnl: PnLPoint[]; winRates: WinRatePoint[] }) {
+  const openSlots = winRates.filter((w) => w.open).map((w) => w.slot)
+  if (openSlots.length === 0) return null
+
+  const pnlBySlot = new Map(pnl.map((p) => [p.slot, p]))
+  const totalUnrealized = openSlots.reduce((sum, slot) => sum + (pnlBySlot.get(slot)?.unrealized ?? 0), 0)
+
+  return (
+    <table className="data-table open-positions">
+      <thead>
+        <tr>
+          <th colSpan={2}>Open positions</th>
+        </tr>
+        <tr>
+          <th>Slot</th>
+          <th>Unrealized PnL</th>
+        </tr>
+      </thead>
+      <tbody>
+        {openSlots.map((slot) => {
+          const unrealized = pnlBySlot.get(slot)?.unrealized ?? 0
+          return (
+            <tr key={slot}>
+              <td>{slot}</td>
+              <td className={unrealized >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{unrealized.toFixed(2)}</td>
+            </tr>
+          )
+        })}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td>
+          <td className={totalUnrealized >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{totalUnrealized.toFixed(2)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  )
+}
+
 export default function RunPerformance({
   pnl,
   winRates,
@@ -25,11 +64,12 @@ export default function RunPerformance({
   const winRateBySlot = new Map(winRates.map((w) => [w.slot, w]))
   const fillsBySlot = new Map(fills.map((f) => [f.slot, f]))
 
-  const totalPnl = pnl.reduce((sum, p) => sum + p.realized + p.unrealized, 0)
+  // Closed-trade PnL only - an open position's floating PnL lives in its own
+  // space below instead of being folded into the same total (#11).
+  const totalRealized = pnl.reduce((sum, p) => sum + p.realized, 0)
   const totalWins = winRates.reduce((sum, w) => sum + w.wins, 0)
   const totalLosses = winRates.reduce((sum, w) => sum + w.losses, 0)
   const totalFills = fills.reduce((sum, f) => sum + f.count, 0)
-  const anyOpen = winRates.some((w) => w.open)
 
   return (
     <>
@@ -38,7 +78,7 @@ export default function RunPerformance({
           <tr>
             <th>Slot</th>
             <th>Win rate</th>
-            <th>PnL</th>
+            <th>Realized PnL</th>
             <th>Fills</th>
           </tr>
         </thead>
@@ -47,17 +87,12 @@ export default function RunPerformance({
             const p = pnlBySlot.get(slot)
             const w = winRateBySlot.get(slot)
             const f = fillsBySlot.get(slot)
-            const slotPnl = (p?.realized ?? 0) + (p?.unrealized ?? 0)
+            const realized = p?.realized ?? 0
             return (
               <tr key={slot}>
                 <td>{slot}</td>
                 <td>{w ? formatWinRate(w.wins, w.losses) : '—'}</td>
-                <td className={slotPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>
-                  {slotPnl.toFixed(2)}
-                  {w?.open && (
-                    <sup title="Position still open - its PnL isn't counted as a win or loss yet">*</sup>
-                  )}
-                </td>
+                <td className={realized >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{realized.toFixed(2)}</td>
                 <td>{f?.count ?? 0}</td>
               </tr>
             )
@@ -67,17 +102,12 @@ export default function RunPerformance({
           <tr>
             <td>Total</td>
             <td>{formatWinRate(totalWins, totalLosses)}</td>
-            <td className={totalPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{totalPnl.toFixed(2)}</td>
+            <td className={totalRealized >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{totalRealized.toFixed(2)}</td>
             <td>{totalFills}</td>
           </tr>
         </tfoot>
       </table>
-      {anyOpen && (
-        <p className="latency-stats">
-          * still in an open position — its PnL is already counted above but won't be scored as a win or loss
-          until it closes flat.
-        </p>
-      )}
+      <OpenPositions pnl={pnl} winRates={winRates} />
     </>
   )
 }

@@ -13,6 +13,9 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
   const [armed, setArmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
+  const [configText, setConfigText] = useState('')
+  const [originalConfigText, setOriginalConfigText] = useState('')
+  const [saveToSource, setSaveToSource] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -26,9 +29,27 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
     }
   }, [project])
 
+  useEffect(() => {
+    if (!config) return
+    let cancelled = false
+    fetch(`/api/config/${project}?path=${encodeURIComponent(config)}`)
+      .then((res) => (res.ok ? res.json() : { content: '' }))
+      .then((data) => {
+        if (!cancelled) {
+          setConfigText(data.content ?? '')
+          setOriginalConfigText(data.content ?? '')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [project, config])
+
   function selectProject(p: Project) {
     setProject(p)
     setConfig('')
+    setConfigText('')
+    setOriginalConfigText('')
     setArmed(false)
   }
 
@@ -37,13 +58,20 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
     setArmed(false)
   }
 
+  const edited = configText !== originalConfigText
+
   async function handleStart() {
     setStarting(true)
     setError(null)
     const res = await fetch('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project, run_type: runType, config }),
+      body: JSON.stringify({
+        project,
+        run_type: runType,
+        config,
+        ...(edited && { config_content: configText, save_to_source: saveToSource }),
+      }),
     })
     setStarting(false)
     if (res.ok) {
@@ -124,6 +152,31 @@ export default function NewRun({ onBack, onStarted }: { onBack: () => void; onSt
           <span className={`r-project ${project}`}>{project}</span>
           <span className="r-config">{config}</span>
         </div>
+      )}
+
+      {config && (
+        <div className="field">
+          <label htmlFor="new-run-config-text">Config contents (editable)</label>
+          <textarea
+            id="new-run-config-text"
+            className="config-editor"
+            spellCheck={false}
+            value={configText}
+            onChange={(e) => setConfigText(e.target.value)}
+          />
+        </div>
+      )}
+
+      {edited && (
+        <label className="arm-toggle">
+          <input type="checkbox" checked={saveToSource} onChange={(e) => setSaveToSource(e.target.checked)} />
+          <span className="switch" />
+          <span className="arm-copy">
+            {saveToSource
+              ? 'Also overwrites the saved config file - the edits apply next time too.'
+              : 'Used for this run only - the saved config file is left unchanged.'}
+          </span>
+        </label>
       )}
 
       {config && runType === 'live' && (

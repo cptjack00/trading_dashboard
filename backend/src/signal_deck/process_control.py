@@ -107,6 +107,7 @@ class ProcessRegistry:
         cwd: Path,
         runs_root: Path,
         output_flag: str | None = None,
+        config_content: str | None = None,
     ) -> dict:
         if not Path(config_path).is_file():
             raise FileNotFoundError(config_path)
@@ -127,6 +128,16 @@ class ProcessRegistry:
             },
         )
 
+        # An edited-in-the-UI config is written into the run's own directory
+        # and launched from there instead of the original path, so every
+        # edited run keeps a durable, self-contained record of what it
+        # actually ran - without touching the saved config file unless the
+        # caller separately chose to overwrite it (see StartRunRequest).
+        launch_config_path = config_path
+        if config_content is not None:
+            launch_config_path = str(run_dir / "used_config.toml")
+            Path(launch_config_path).write_text(config_content)
+
         # The config path is always the next argv token after shlex-splitting
         # the fixed prefix - never string-substituted into it - so a path
         # with spaces or shell metacharacters can't reshape the command.
@@ -138,7 +149,7 @@ class ProcessRegistry:
         # its own log output into this run's own directory instead of
         # whatever path convention it'd otherwise pick - `runs.py`/`live.py`
         # only ever look for a run's log inside `run_dir`.
-        argv = shlex.split(cmd_prefix) + [str(config_path)]
+        argv = shlex.split(cmd_prefix) + [launch_config_path]
         if output_flag is not None:
             argv += [output_flag, str(run_dir / "trade_log.jsonl")]
 

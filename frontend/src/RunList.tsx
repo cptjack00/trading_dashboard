@@ -91,8 +91,9 @@ function RunTicket({
       <span className="ticket-main">
         <span className="ticket-name">{run.run_id}</span>
         <span className="ticket-meta">
-          <span>{run.project}</span>
-          <span>{run.status === 'backtest' ? 'BACKTEST' : formatDuration(duration)}</span>
+          <span className={`chip chip-project ${run.project}`}>{run.project}</span>
+          <span className={`chip chip-status ${run.status}`}>{run.status}</span>
+          {run.status !== 'backtest' && <span>{formatDuration(duration)}</span>}
         </span>
       </span>
       <span className={`ticket-pnl ${run.pnl > 0 ? 'pos' : run.pnl < 0 ? 'neg' : 'flat'}`}>

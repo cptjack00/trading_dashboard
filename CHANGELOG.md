@@ -179,6 +179,22 @@
 - The rail can now be collapsed (a small tab on its right edge) to reclaim
   width for the run detail view, and expanded again via a floating button at
   the workspace's top-left corner.
+- New Run modal: picking a config now loads its raw TOML text into an
+  editable box, so parameters that only live inside the config file (e.g.
+  rustle's `from_date`) can be tweaked without leaving the dashboard. Edits
+  default to a one-off launch (written into the run's own directory as
+  `used_config.toml`, source file untouched); a toggle lets the operator
+  also overwrite the saved config file for next time. Backend: new
+  `GET /api/config/{project}?path=...` (reuses the existing registered-root
+  check), and `POST /api/runs` accepts optional `config_content` /
+  `save_to_source`, rejecting invalid TOML before launching anything.
+- Run list tickets now show a colored project chip (RUSTLE/TICKTRADER) and a
+  colored status chip (LIVE/STOPPED/CRASHED/BACKTEST) instead of plain text,
+  so run kind and mode read at a glance instead of needing the text read.
+- Run detail Performance tab: the closed-trade table now shows realized PnL
+  only; a slot currently in an open position no longer folds its floating
+  PnL into that total. Open positions get their own small table below,
+  listing each open slot's unrealized PnL and a subtotal.
 
 ### Changed
 

@@ -529,6 +529,126 @@ def test_start_run_rejects_config_outside_registered_roots(settings, tmp_path):
     assert "registered" in resp.json()["detail"]
 
 
+def test_get_config_content_requires_session(settings, tmp_path):
+    client = make_client(settings, tmp_path)
+    resp = client.get("/api/config/rustle", params={"path": "x"})
+    assert resp.status_code == 401
+
+
+def test_get_config_content_rejects_unregistered_path(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    outside = tmp_path / "outside" / "strategy.toml"
+    outside.parent.mkdir()
+    outside.write_text("name = 'x'\n")
+    client = make_client(settings, tmp_path)
+    login(client)
+    resp = client.get("/api/config/rustle", params={"path": str(outside)})
+    assert resp.status_code == 400
+
+
+def test_get_config_content_returns_file_text(settings, tmp_path):
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir()
+    config = configs_dir / "strategy.toml"
+    config.write_text("name = 'x'\n")
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(configs_dir)})
+
+    resp = client.get("/api/config/rustle", params={"path": str(config)})
+    assert resp.status_code == 200
+    assert resp.json() == {"content": "name = 'x'\n"}
+
+
+def test_start_run_rejects_invalid_edited_toml(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    config = tmp_path / "strategy.toml"
+    config.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
+
+    resp = client.post(
+        "/api/runs",
+        json={"project": "rustle", "run_type": "backtest", "config": str(config), "config_content": "not [ toml"},
+    )
+    assert resp.status_code == 400
+    assert "TOML" in resp.json()["detail"]
+    assert config.read_text() == "name = 'x'\n"
+
+
+def test_start_run_with_edited_config_leaves_source_untouched_by_default(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
+    settings.process_registry_file = tmp_path / "process_registry.json"
+    settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    config = tmp_path / "strategy.toml"
+    config.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
+
+    resp = client.post(
+        "/api/runs",
+        json={
+            "project": "rustle",
+            "run_type": "backtest",
+            "config": str(config),
+            "config_content": "name = 'edited'\n",
+        },
+    )
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+    run_dir = settings.rustle_runs_dir / run_id
+    assert (run_dir / "used_config.toml").read_text() == "name = 'edited'\n"
+    assert config.read_text() == "name = 'x'\n"
+    os.kill(client.app.state.process_registry._procs[f"rustle:{run_id}"].pid, signal.SIGKILL)
+
+
+def test_start_run_with_save_to_source_overwrites_config_file(settings, tmp_path):
+    settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    _bin = str(_fake_binary(tmp_path))
+    settings.rustle_cwd = tmp_path
+    settings.rustle_backtest_cmd = _bin
+    settings.rustle_live_cmd = _bin
+    settings.process_registry_file = tmp_path / "process_registry.json"
+    settings.stop_log_file = tmp_path / "stop_events.log"
+    settings.config_roots_file = tmp_path / "config_roots.json"
+    config = tmp_path / "strategy.toml"
+    config.write_text("name = 'x'\n")
+
+    client = make_client(settings, tmp_path)
+    login(client)
+    client.post("/api/config-roots/rustle", json={"root": str(tmp_path)})
+
+    resp = client.post(
+        "/api/runs",
+        json={
+            "project": "rustle",
+            "run_type": "backtest",
+            "config": str(config),
+            "config_content": "name = 'edited'\n",
+            "save_to_source": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert config.read_text() == "name = 'edited'\n"
+    run_id = resp.json()["run_id"]
+    os.kill(client.app.state.process_registry._procs[f"rustle:{run_id}"].pid, signal.SIGKILL)
+
+
 def test_start_run_spawns_process_and_appears_in_run_list(settings, tmp_path):
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
     _bin = str(_fake_binary(tmp_path))
