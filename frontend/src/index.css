@@ -256,6 +256,23 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
+}
+
+/* Floats on the rail/stage border seam instead of sitting in .rail-actions -
+   that row is already tight with 3 buttons in a 320px rail, and a 4th
+   competing for the same space is too easy to lose to wrapping. */
+.rail-collapse {
+  position: absolute;
+  top: 60px;
+  right: -13px;
+  z-index: 2;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
 }
 .rail-head,
 .rail-foot {

@@ -28,6 +28,19 @@ const FONT = "'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas,
 // requires whole-number time values, so scale the fraction up before handing it over.
 const PROGRESS_SCALE = 1_000_000
 
+// lightweight-charts labels every tick itself using UTC getters on the `time`
+// value, never the viewer's local timezone - a real (correct) UTC epoch
+// therefore displays shifted by the browser's UTC offset. Shift the epoch by
+// that same offset before handing it over so the library's own UTC rendering
+// lands on the right local wall-clock; format calls then read it back with
+// `timeZone: 'UTC'` to match. Also rounds to a whole second, since the
+// library requires strictly-ascending integer times and a raw fractional
+// epoch can round two adjacent points onto the same second.
+function toChartTime(epochSeconds: number): number {
+  const offsetMinutes = new Date(epochSeconds * 1000).getTimezoneOffset()
+  return Math.round(epochSeconds - offsetMinutes * 60)
+}
+
 // The chart draws on <canvas>, which never resolves `var(--x)` CSS custom
 // properties on its own - resolve to the literal computed color (recursively,
 // since e.g. --accent itself is defined as `var(--phosphor)`) before handing
@@ -145,7 +158,7 @@ function useLineLikeChart(
   const apisRef = useRef<ISeriesApi<'Line' | 'Area'>[]>([])
 
   const formatTime = timeAxis
-    ? (t: number) => new Date(t * 1000).toLocaleString()
+    ? (t: number) => new Date(t * 1000).toLocaleString(undefined, { timeZone: 'UTC' })
     : (t: number) => `${Math.round((t / PROGRESS_SCALE) * 100)}%`
   const progressTickFormatter = (t: number) => `${Math.round((t / PROGRESS_SCALE) * 100)}%`
 
@@ -209,26 +222,29 @@ function useLineLikeChart(
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-    const toTime = (x: number) => (timeAxis ? x : Math.round(x * PROGRESS_SCALE)) as UTCTimestamp
+    const toTime = (x: number) => (timeAxis ? toChartTime(x) : Math.round(x * PROGRESS_SCALE)) as UTCTimestamp
+    // Two points rounding onto the same second (fast successive fills) would
+    // otherwise violate the library's strictly-ascending requirement and
+    // throw, aborting setData for every series still to come - keep the last
+    // (most current) value for a colliding second and drop the rest.
+    const dedupeAscending = <T extends { time: UTCTimestamp }>(items: T[]): T[] =>
+      items.filter((item, i) => i === items.length - 1 || item.time !== items[i + 1].time)
 
     series.forEach((s, i) => {
-      apisRef.current[i]?.setData(
-        [...s.points].sort((a, b) => a.x - b.x).map((p) => ({ time: toTime(p.x), value: p.y })),
-      )
+      const points = [...s.points].sort((a, b) => a.x - b.x).map((p) => ({ time: toTime(p.x), value: p.y }))
+      apisRef.current[i]?.setData(dedupeAscending(points))
     })
 
     if (apisRef.current[0]) {
-      createSeriesMarkers(
-        apisRef.current[0],
-        [...markers]
-          .sort((a, b) => a.x - b.x)
-          .map((m) => ({
-            time: toTime(m.x),
-            position: 'inBar' as const,
-            color: resolveColor(m.color),
-            shape: 'circle' as const,
-          })),
-      )
+      const markerPoints = [...markers]
+        .sort((a, b) => a.x - b.x)
+        .map((m) => ({
+          time: toTime(m.x),
+          position: 'inBar' as const,
+          color: resolveColor(m.color),
+          shape: 'circle' as const,
+        }))
+      createSeriesMarkers(apisRef.current[0], dedupeAscending(markerPoints))
     }
 
     chart.timeScale().fitContent()

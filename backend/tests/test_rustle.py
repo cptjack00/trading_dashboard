@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
-from signal_deck.sources.rustle import RustleAdapter
+from signal_deck.sources.rustle import RustleAdapter, RustleHealthLogAdapter
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rustle_sample.jsonl"
 CONFIG = Path(__file__).parent / "fixtures" / "rustle_sample_config.toml"
@@ -132,3 +133,71 @@ def test_line_cut_mid_write_is_not_parsed_until_complete(tmp_path: Path):
         f.write(first_two[len(first_two) // 2 :])  # write completes
     completed = adapter.tail()
     assert len(completed.trades) == 1
+
+
+def _health_line(ts_ms: int, *, endpoint: str, count: int, total: float, buckets: list[tuple[float, int]]) -> str:
+    return json.dumps(
+        {
+            "ts_ms": ts_ms,
+            "heartbeat": True,
+            "md_latency": [],
+            "api_request": [
+                {
+                    "labels": {"endpoint": endpoint, "code": "200"},
+                    "count": count,
+                    "sum": total,
+                    "buckets": [{"le": le, "count": c} for le, c in buckets],
+                }
+            ],
+        }
+    )
+
+
+def test_health_log_first_snapshot_is_a_baseline_not_a_sample(tmp_path: Path):
+    # Prometheus histograms are cumulative since process start - a lone snapshot
+    # says nothing about *recent* latency, so it must only seed the diff base.
+    path = tmp_path / "health_log.jsonl"
+    path.write_text(
+        _health_line(1000, endpoint="order_place", count=3, total=0.06, buckets=[(0.01, 0), (0.025, 3), (0.05, 3)])
+        + "\n"
+    )
+    result = RustleHealthLogAdapter(path).tail()
+
+    assert result.channel_latency == {}
+
+
+def test_health_log_diffs_consecutive_cumulative_snapshots(tmp_path: Path):
+    path = tmp_path / "health_log.jsonl"
+    lines = [
+        _health_line(1000, endpoint="order_place", count=0, total=0.0, buckets=[(0.01, 0), (0.025, 0), (0.05, 0)]),
+        # One new 0.02s sample landed in the 5s interval since the baseline.
+        _health_line(6000, endpoint="order_place", count=1, total=0.02, buckets=[(0.01, 0), (0.025, 1), (0.05, 1)]),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+    result = RustleHealthLogAdapter(path).tail()
+
+    [sample] = result.channel_latency["api:order_place"]
+    assert sample.ts == 6.0
+    assert sample.mean == 20.0  # 0.02s delta-sum / 1 delta-sample, in ms
+    # p99/p999 interpolated within the (0.01, 0.025] bucket the one sample fell into.
+    assert round(sample.p99, 3) == 24.85
+    assert round(sample.p999, 3) == 24.985
+
+
+def test_health_log_counter_reset_is_treated_as_a_new_baseline(tmp_path: Path):
+    # A process restart resets the underlying Prometheus counters to zero -
+    # the resulting negative delta must be dropped, not reported as latency.
+    path = tmp_path / "health_log.jsonl"
+    lines = [
+        _health_line(1000, endpoint="order_place", count=5, total=0.1, buckets=[(0.01, 0), (0.025, 5), (0.05, 5)]),
+        _health_line(2000, endpoint="order_place", count=1, total=0.02, buckets=[(0.01, 0), (0.025, 1), (0.05, 1)]),
+        _health_line(7000, endpoint="order_place", count=2, total=0.04, buckets=[(0.01, 0), (0.025, 2), (0.05, 2)]),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+
+    result = RustleHealthLogAdapter(path).tail()
+
+    [sample] = result.channel_latency["api:order_place"]
+    assert sample.ts == 7.0
+    assert sample.mean == 20.0  # 0.02s delta-sum / 1 delta-sample from the post-reset baseline

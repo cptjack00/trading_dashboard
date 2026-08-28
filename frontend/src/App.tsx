@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ConfigRoots from './ConfigRoots'
 import NewRun from './NewRun'
 import RunComparison from './RunComparison'
@@ -63,6 +63,10 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   const { runs, refresh: refreshRuns } = useRuns()
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // Total pnl for whichever run's Overview is currently open, pushed live off
+  // its SSE stream - overrides that one run's poll-derived `pnl` so the rail
+  // doesn't sit on a stale number for up to 60s while its own tab is live.
+  const [livePnl, setLivePnl] = useState<{ key: string; pnl: number } | null>(null)
   const [compareMode, setCompareMode] = useState(false)
   const [compareSelection, setCompareSelection] = useState<Run[]>([])
   const [comparing, setComparing] = useState<Run[] | null>(null)
@@ -71,6 +75,11 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [railCollapsed, setRailCollapsed] = useState(false)
 
   const selectedRun = selectedKey ? runs.find((r) => runKey(r) === selectedKey) ?? null : null
+  const onLivePnl = useCallback(
+    (pnl: number | null) => setLivePnl(pnl === null || !selectedKey ? null : { key: selectedKey, pnl }),
+    [selectedKey],
+  )
+  const runsForDisplay = livePnl ? runs.map((r) => (runKey(r) === livePnl.key ? { ...r, pnl: livePnl.pnl } : r)) : runs
 
   function selectRun(run: Run) {
     setComparing(null)
@@ -97,10 +106,13 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   return (
     <div className="shell">
-      <Topstrip runs={runs} />
+      <Topstrip runs={runsForDisplay} />
       <div className="workspace">
         {!railCollapsed && (
           <aside className="rail">
+            <button className="rail-collapse" onClick={() => setRailCollapsed(true)} title="Collapse panel">
+              ⟨⟨
+            </button>
             <div className="rail-head">
               <span className="eyebrow">Runs</span>
               <div className="rail-actions">
@@ -116,13 +128,10 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
                 <button className="new-run-btn" onClick={() => setShowNewRun(true)}>
                   + New run
                 </button>
-                <button className="new-run-btn rail-collapse" onClick={() => setRailCollapsed(true)} title="Collapse panel">
-                  ⟨⟨
-                </button>
               </div>
             </div>
             <RunList
-              runs={runs}
+              runs={runsForDisplay}
               activeKey={selectedKey ?? undefined}
               onSelectRun={selectRun}
               compareMode={compareMode}
@@ -165,7 +174,7 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
               }}
             />
           ) : selectedRun ? (
-            <RunOverview key={runKey(selectedRun)} run={selectedRun} />
+            <RunOverview key={runKey(selectedRun)} run={selectedRun} onLivePnl={onLivePnl} />
           ) : (
             <p className="scope-empty">Select a run from the left, or start a new one.</p>
           )}

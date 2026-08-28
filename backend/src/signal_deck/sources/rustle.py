@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import json
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .base import EquityPoint, Fills, LogSourceAdapter, ParsedLog, PnL, PricePoint, Trade, WinRate
+from .base import EquityPoint, Fills, LatencySample, LogSourceAdapter, ParsedLog, PnL, PricePoint, Trade, WinRate
 
 
 def _load_slot_symbols(config_path: Path) -> dict[str, str]:
@@ -110,3 +111,105 @@ class RustleAdapter(LogSourceAdapter):
         )
 
         into.fills.append(Fills(ts=ts, slot=slot, count=1))
+
+
+@dataclass(frozen=True)
+class _HistTotals:
+    """One label-set's cumulative Prometheus histogram state, as carried in a
+    `health_log.jsonl` line - counters since process start, not a windowed sample."""
+
+    count: int
+    sum: float
+    buckets: list[tuple[float, int]]
+
+
+def _reduce_key(family: str, labels: dict[str, Any]) -> str:
+    """Collapses a histogram's label-set to the channel name the Latency tab
+    groups by. `md_latency` is labelled by feed; `api_request` by endpoint
+    (across every response code, since a per-code split would fragment one
+    real channel into a dozen near-empty ones for little benefit)."""
+    return labels.get("feed") or labels.get("endpoint") or family
+
+
+def _merge_hist(a: _HistTotals, b: _HistTotals) -> _HistTotals:
+    return _HistTotals(
+        count=a.count + b.count,
+        sum=a.sum + b.sum,
+        buckets=[(le, ca + cb) for (le, ca), (_, cb) in zip(a.buckets, b.buckets)],
+    )
+
+
+def _bucket_percentile(buckets: list[tuple[float, int]], total: int, pct: float) -> float:
+    """Prometheus's own `histogram_quantile` approach: linearly interpolate
+    within the bucket where the cumulative count crosses the target rank."""
+    if total <= 0 or not buckets:
+        return 0.0
+    rank = pct * total
+    prev_le, prev_count = 0.0, 0
+    for le, count in buckets:
+        if count >= rank:
+            span = count - prev_count
+            return le if span <= 0 else prev_le + (rank - prev_count) / span * (le - prev_le)
+        prev_le, prev_count = le, count
+    # Rank spills past the last finite bucket, i.e. into the implicit +Inf
+    # bucket `health_log.jsonl` doesn't carry - clamp to the last bound as a
+    # best-effort estimate rather than claiming a value we don't have.
+    return prev_le
+
+
+class RustleHealthLogAdapter(LogSourceAdapter):
+    """Tails rustle's `health_log.jsonl` - a live/shadow-only, ~5s-cadence
+    snapshot of the same in-process Prometheus histograms `/metrics` would
+    scrape (`crates/tt-log/src/metrics.rs`), independent of whether anything
+    is actually scraping.
+
+    Each snapshot is *cumulative* since process start, so on its own it says
+    nothing about recent latency - keep the previous cumulative totals per
+    channel and diff consecutive snapshots to recover that interval's actual
+    samples (mean, and p99/p999 interpolated from the delta bucket counts).
+    """
+
+    def __init__(self, path: Path, **kwargs: Any) -> None:
+        super().__init__(path, **kwargs)
+        self._previous: dict[str, _HistTotals] = {}
+
+    def parse_line(self, line: bytes, into: ParsedLog) -> None:
+        text = line.strip()
+        if not text:
+            return
+        event: dict[str, Any] = json.loads(text)
+        ts = event.get("ts_ms", 0) / 1000.0
+
+        for family, prefix in (("md_latency", "md"), ("api_request", "api")):
+            merged: dict[str, _HistTotals] = {}
+            for entry in event.get(family, []):
+                totals = _HistTotals(
+                    count=entry["count"],
+                    sum=entry["sum"],
+                    buckets=[(b["le"], b["count"]) for b in entry["buckets"]],
+                )
+                key = _reduce_key(family, entry.get("labels", {}))
+                merged[key] = _merge_hist(merged[key], totals) if key in merged else totals
+
+            for key, totals in merged.items():
+                channel = f"{prefix}:{key}"
+                prior = self._previous.get(channel)
+                self._previous[channel] = totals
+                # A run's own restart resets the underlying counters to zero,
+                # producing a negative delta here too - either way there's no
+                # valid interval to report yet, just a new baseline to diff from.
+                if prior is None or totals.count - prior.count <= 0:
+                    continue
+
+                delta_count = totals.count - prior.count
+                delta_sum = totals.sum - prior.sum
+                delta_buckets = [(le, c - pc) for (le, c), (_, pc) in zip(totals.buckets, prior.buckets)]
+                into.add_latency(
+                    channel,
+                    LatencySample(
+                        ts=ts,
+                        mean=(delta_sum / delta_count) * 1000,
+                        p99=_bucket_percentile(delta_buckets, delta_count, 0.99) * 1000,
+                        p999=_bucket_percentile(delta_buckets, delta_count, 0.999) * 1000,
+                    ),
+                )

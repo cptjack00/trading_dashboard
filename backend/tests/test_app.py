@@ -312,9 +312,8 @@ def test_config_scan_empty_when_no_roots_configured(settings, tmp_path):
 
 
 def test_run_overview_includes_performance_and_market_fields(settings, tmp_path):
-    # rustle's health/latency telemetry (health_log.jsonl, the live-only
-    # :9464/metrics scrape) isn't wired up yet - see CHANGELOG - so this only
-    # covers what trade_log.jsonl actually drives: pnl, win rate, fills, and
+    # This run has no health_log.jsonl (see test_live.py for that adapter), so
+    # it only covers what trade_log.jsonl drives: pnl, win rate, fills, and
     # per-symbol matched prices.
     run_dir = tmp_path / "rustle-runs" / "run-1"
     run_dir.mkdir(parents=True)

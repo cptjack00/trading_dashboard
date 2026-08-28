@@ -163,9 +163,31 @@
   behavior. `CONTEXT.md` re-anchors "Operator console," "Run halt," "Control
   channel," and "Operator intervention" from rustle's own `CONTEXT.md`, now
   that tt-console is superseded. (#11)
+- `RustleHealthLogAdapter` (`sources/rustle.py`) tails a live/shadow rustle
+  run's `health_log.jsonl` — a ~5s-cadence snapshot of the same in-process
+  Prometheus histograms `/metrics` would scrape (`md_latency`, `api_request`)
+  — and wires it into the Latency tab, closing the gap noted above. Each
+  snapshot's bucket counts are cumulative since process start, so a lone
+  line says nothing about recent latency: the adapter keeps the previous
+  snapshot per channel (grouped by feed for `md_latency`, by endpoint for
+  `api_request`) and diffs consecutive ones, interpolating p99/p999 from the
+  delta bucket counts (Prometheus's own `histogram_quantile` approach). A
+  negative delta (the run's own process restarted, resetting the counters)
+  is treated as a new baseline rather than reported as latency. Left alone:
+  rustle's live health checks (component up/down), which nothing in
+  `health_log.jsonl` maps onto yet.
+- The rail can now be collapsed (a small tab on its right edge) to reclaim
+  width for the run detail view, and expanded again via a floating button at
+  the workspace's top-left corner.
 
 ### Changed
 
+- Market tab no longer marks individual trade fills as dots on the price
+  line — just the matched price series, which is what the tab is actually
+  for; per-trade detail already lives in the trade log.
+- Fills-over-time moved from the Performance tab to Overview, and now plots
+  one aggregated total-fills series instead of a line per slot — the
+  per-slot breakdown is still available as counts in the Performance table.
 - Replaced `uPlot` with `lightweight-charts` for the equity curve, latency,
   market, per-slot fills, and run-comparison charts: real crosshair tooltips,
   native scroll/pinch zoom and drag-to-pan, and a proper legend, in place of
@@ -212,10 +234,7 @@
   now writes into `run.json`; the bare `HH:MM:SS.mmm` timestamps are
   likewise anchored to the config's `from_date`. Win rate is derived
   per-slot (see Fixed, below, for the round-trip-vs-per-fill scoring
-  detail). Known gap: rustle's health/latency telemetry
-  (`health_log.jsonl`, the live-only `:9464/metrics` Prometheus scrape)
-  isn't wired up — the Latency tab and live health checks stay empty for
-  rustle runs.
+  detail).
 - `/api/runs` (the run list) now polls every 60s instead of 5s - which runs
   exist barely changes minute to minute, and a run's own live PnL/equity
   already updates far faster via its Overview SSE stream once selected. A
@@ -289,3 +308,29 @@
   process — `is_pid_alive` is just `os.kill(pid, 0)`, which can't tell a
   reused PID from the original one. Manifest-less runs older than 24h are no
   longer considered "worth tracking" regardless of PID liveness.
+- The new rail-collapse button was easy to lose in the already-tight
+  3-button `.rail-actions` row; moved it out to float on the rail's own
+  border instead (mirroring the expand button's floating pattern), so it no
+  longer competes with those buttons for space.
+- Every `charts.tsx` time-axis chart (fills-over-time, market, latency, …)
+  read wrong on two counts: lightweight-charts formats its own tick labels
+  using UTC getters regardless of the browser's timezone, so the axis read
+  hours off from the (correctly local-time) tooltip; and passing a raw
+  fractional epoch (sub-second precision straight from Python) as `time`
+  could round two adjacent points onto the same second, which the library
+  rejects outright — throwing partway through a multi-series `setData` and
+  silently killing every series after the one that collided, along with the
+  `fitContent()` call that would otherwise have framed the whole run in one
+  view. Timestamps are now shifted by the local UTC offset before being
+  handed to the library (so its own UTC-based rendering lands on the correct
+  local time) and rounded to whole seconds with same-second duplicates
+  collapsed to the latest value.
+- The run rail's PnL for the currently-open run sat on its own 60s
+  `/api/runs` poll even though that run's Overview tab already had a live
+  SSE stream open — so the rail could lag the Overview equity chart by up
+  to a minute for a fast-moving live run. `RunOverview` now pushes its
+  running total (`sum(realized + unrealized)` across slots, mirroring
+  `live_manager.live_pnl_totals`) up on every SSE delta; the rail displays
+  that in place of the polled value for that one run only, falling back to
+  the poll once the run stops being live or its tab is closed. Run
+  discovery itself is unaffected and still polls every 60s.

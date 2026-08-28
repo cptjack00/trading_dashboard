@@ -217,7 +217,10 @@ def test_encrypted_rustle_run_has_no_latency_data(tmp_path: Path):
 
     overview = manager.get_overview("rustle", "run-1")
     assert overview.encrypted_locked is True
-    assert overview.channel_latency == {}  # rustle has no separable latency stream
+    # An encrypted trade_log.jsonl locks the whole run out of background polling
+    # (see the `_poll_run` comment) - this run also has no health_log.jsonl, so
+    # there's nothing to read anyway.
+    assert overview.channel_latency == {}
 
 
 def test_ticktrader_encrypted_trade_log_still_streams_latency(tmp_path: Path):

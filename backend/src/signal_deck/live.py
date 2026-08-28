@@ -32,7 +32,7 @@ from .sources.base import (
     WinRate,
     is_encrypted,
 )
-from .sources.rustle import RustleAdapter
+from .sources.rustle import RustleAdapter, RustleHealthLogAdapter
 from .sources.ticktrader import TickTraderLatencyAdapter, TickTraderTradeLogAdapter
 
 POLL_INTERVAL_SECONDS = 1.0
@@ -101,6 +101,19 @@ def _make_adapters(log_paths: list[Path], project: str, manifest: dict) -> "LogS
 
 def _ticktrader_latency_path(run_dir: Path, channel: str) -> Path:
     return run_dir / f"{channel}_latency.jsonl"
+
+
+def _rustle_health_log_path(run_dir: Path) -> Path:
+    return run_dir / "health_log.jsonl"
+
+
+def _rustle_latency_snapshot(run_dir: Path) -> dict[str, list[LatencySample]]:
+    """One-shot read of a rustle live/shadow run's full `health_log.jsonl` history -
+    live-only, so a backtest run (no such file) always comes back empty."""
+    path = _rustle_health_log_path(run_dir)
+    if not path.is_file():
+        return {}
+    return RustleHealthLogAdapter(path).tail().channel_latency
 
 
 def _ticktrader_latency_snapshot(run_dir: Path) -> dict[str, list[LatencySample]]:
@@ -287,8 +300,10 @@ class LiveIngestionManager:
         if state is None:
             encrypted = any(is_encrypted(p) for p in log_paths)
             if encrypted and project == "rustle":
-                # rustle interleaves trades/health/latency in one file - an encrypted
-                # log locks all of it, since there's nothing separable to tail.
+                # An encrypted trade_log.jsonl locks the whole run out of background
+                # polling, even though health_log.jsonl (a separate file) would still
+                # be readable on its own - keeping that restriction deliberately
+                # simple rather than half-locking a run.
                 return
             adapter = None if encrypted else _make_adapters(log_paths, project, manifest)
             state = _LiveState(project=project, adapter=adapter, encrypted_locked=encrypted)
@@ -308,13 +323,15 @@ class LiveIngestionManager:
             equity, trades = parsed.equity, parsed.trades
             pnl, win_rates, fills, health = parsed.pnl, parsed.win_rates, parsed.fills, parsed.health
             prices = parsed.symbol_prices
-            if project == "rustle":
-                latency = parsed.channel_latency
 
         if project == "ticktrader":
             # TickTrader-para's latency channels live in their own files, so they keep
             # flowing even when the trade log itself is encrypted-locked.
             latency = self._poll_ticktrader_latency(run_dir, state)
+        elif project == "rustle":
+            # health_log.jsonl is rustle's own separate file too (not, as an earlier
+            # comment here assumed, interleaved into trade_log.jsonl).
+            latency = self._poll_rustle_latency(run_dir, state)
 
         if not any((equity, trades, pnl, win_rates, fills, health, prices, latency)):
             return
@@ -355,6 +372,16 @@ class LiveIngestionManager:
                 new[channel] = samples
         return new
 
+    def _poll_rustle_latency(self, run_dir: Path, state: "_LiveState") -> dict[str, list[LatencySample]]:
+        path = _rustle_health_log_path(run_dir)
+        if not path.is_file():
+            return {}
+        adapter = state.latency_adapters.get("health")
+        if adapter is None:
+            adapter = RustleHealthLogAdapter(path)
+            state.latency_adapters["health"] = adapter
+        return adapter.tail().channel_latency
+
     def get_overview(self, project: str, run_id: str) -> Overview | None:
         key = (project, run_id)
 
@@ -381,10 +408,14 @@ class LiveIngestionManager:
         run_dir, manifest = found
         status = _status(run_type=manifest["run_type"], state=manifest["state"])
         log_paths = [p for p in _log_paths(run_dir, project) if p.is_file()]
-        # TickTrader-para's latency channels live in their own files, so they stay
-        # readable regardless of the trade log's encryption state; rustle has no
-        # such separation (see `_poll_run`).
-        channel_latency = _ticktrader_latency_snapshot(run_dir) if project == "ticktrader" else {}
+        # Both projects' latency channels live in their own file(s), separate from
+        # the trade log, so they stay readable regardless of its encryption state.
+        if project == "ticktrader":
+            channel_latency = _ticktrader_latency_snapshot(run_dir)
+        elif project == "rustle":
+            channel_latency = _rustle_latency_snapshot(run_dir)
+        else:
+            channel_latency = {}
 
         if not log_paths:
             overview = Overview(
@@ -408,8 +439,6 @@ class LiveIngestionManager:
             _merge_latest_by_slot(latest_win_rates, parsed.win_rates)
             _record_fills(fill_totals, fill_history, parsed.fills)
             _merge_latest_health(latest_health, parsed.health)
-            if project == "rustle":
-                channel_latency = dict(parsed.channel_latency)
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=False,
                 equity=_bucket_equity(parsed.equity), trades=parsed.trades,

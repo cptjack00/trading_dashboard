@@ -3,7 +3,7 @@ import type { Run } from './RunList'
 import RunPerformance from './RunPerformance'
 import RunMarket from './RunMarket'
 import RunLatency from './RunLatency'
-import { LineChart } from './charts'
+import { LineChart, StepChart } from './charts'
 
 type EquityPoint = { ts: number; equity: number }
 type TradeRow = { ts: number; symbol: string; side: string; price: number; qty: number; slot: string | null }
@@ -66,6 +66,19 @@ function mergeLatestByKey<T>(current: T[], incoming: T[], keyOf: (item: T) => st
   const byKey = new Map(current.map((item) => [keyOf(item), item]))
   for (const item of incoming) byKey.set(keyOf(item), item)
   return [...byKey.values()]
+}
+
+// Sums each slot's latest known count as of each event, rather than summing
+// per-slot totals independently, since slots don't share timestamps.
+function aggregateFillHistory(fillHistory: Record<string, FillsPoint[]>): { x: number; y: number }[] {
+  const events = Object.values(fillHistory)
+    .flat()
+    .sort((a, b) => a.ts - b.ts)
+  const latestBySlot = new Map<string, number>()
+  return events.map((e) => {
+    latestBySlot.set(e.slot, e.count)
+    return { x: e.ts, y: [...latestBySlot.values()].reduce((sum, c) => sum + c, 0) }
+  })
 }
 
 function mergeFillCounts(current: FillsPoint[], incoming: FillsPoint[]): FillsPoint[] {
@@ -161,7 +174,17 @@ function StopButton({ project, runId }: { project: string; runId: string }) {
   )
 }
 
-export default function RunOverview({ run }: { run: Run }) {
+export default function RunOverview({
+  run,
+  onLivePnl,
+}: {
+  run: Run
+  // Total pnl (realized+unrealized across all slots), pushed on every SSE
+  // update so the run list can show it without waiting on its own 60s poll -
+  // mirrors live.py's `live_pnl_totals`. `null` on unmount/no-longer-live so
+  // the list falls back to its own polled value instead of freezing here.
+  onLivePnl?: (pnl: number | null) => void
+}) {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
 
@@ -181,6 +204,18 @@ export default function RunOverview({ run }: { run: Run }) {
   }, [run.project, run.run_id])
 
   const isLive = overview?.live_tracked ?? false
+
+  useEffect(() => {
+    if (isLive && overview) {
+      onLivePnl?.(overview.pnl.reduce((sum, p) => sum + p.realized + p.unrealized, 0))
+    } else {
+      onLivePnl?.(null)
+    }
+  }, [isLive, overview, onLivePnl])
+
+  // Belt-and-braces: also clear on unmount (e.g. switching to a different
+  // run) in case the effect above never re-ran with isLive=false first.
+  useEffect(() => () => onLivePnl?.(null), [onLivePnl])
 
   useEffect(() => {
     if (!isLive) return
@@ -227,26 +262,35 @@ export default function RunOverview({ run }: { run: Run }) {
     }
     if (tab === 'performance') {
       return (
-        <RunPerformance
-          pnl={overview.pnl}
-          winRates={overview.win_rates}
-          fills={overview.fills}
-          fillHistory={overview.fill_history}
-        />
+        <RunPerformance pnl={overview.pnl} winRates={overview.win_rates} fills={overview.fills} />
       )
     }
     if (tab === 'market') {
       return <RunMarket symbolPrices={overview.symbol_prices} />
     }
     return (
-      <div className="panel">
-        <div className="panel-head">
-          <span className="eyebrow">Equity</span>
+      <>
+        <div className="panel">
+          <div className="panel-head">
+            <span className="eyebrow">Equity</span>
+          </div>
+          <div className="chart-pad">
+            <EquityCurve points={overview.equity} />
+          </div>
         </div>
-        <div className="chart-pad">
-          <EquityCurve points={overview.equity} />
+        <div className="panel">
+          <div className="panel-head">
+            <span className="eyebrow">Fills over time</span>
+          </div>
+          <div className="chart-pad">
+            {Object.keys(overview.fill_history).length === 0 ? (
+              <p className="overview-empty">No fills yet.</p>
+            ) : (
+              <StepChart series={[{ label: 'Fills', color: 'var(--accent)', points: aggregateFillHistory(overview.fill_history) }]} />
+            )}
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
