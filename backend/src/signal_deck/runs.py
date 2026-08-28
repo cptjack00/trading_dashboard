@@ -119,15 +119,25 @@ def _find_manifestless_run_dirs(root: Path, log_name: str) -> list[Path]:
     found: list[Path] = []
 
     def _walk(current: Path) -> None:
-        if (current / MANIFEST_NAME).is_file():
+        try:
+            if (current / MANIFEST_NAME).is_file():
+                return
+            if (current / log_name).is_file():
+                found.append(current)
+                return
+            children = sorted(p for p in current.iterdir() if p.is_dir())
+        except PermissionError:
+            # ponytail: skip dirs we can't read (e.g. root-owned build output
+            # under a runs root) instead of taking down /api/runs.
             return
-        if (current / log_name).is_file():
-            found.append(current)
-            return
-        for child in sorted(p for p in current.iterdir() if p.is_dir()):
+        for child in children:
             _walk(child)
 
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+    try:
+        top = sorted(p for p in root.iterdir() if p.is_dir())
+    except PermissionError:
+        return []
+    for child in top:
         _walk(child)
     return found
 
