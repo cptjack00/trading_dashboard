@@ -14,7 +14,9 @@ mechanism exists yet (see `sources/base.py`), so encrypted always means
 from __future__ import annotations
 
 import asyncio
+import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 
@@ -32,7 +34,8 @@ from .sources.base import (
     WinRate,
     is_encrypted,
 )
-from .sources.rustle import RustleAdapter, RustleHealthLogAdapter
+from .sources.market_data import MarketTickAdapter
+from .sources.rustle import RustleAdapter, RustleHealthLogAdapter, _load_run_date, _load_slot_symbols
 from .sources.ticktrader import TickTraderLatencyAdapter, TickTraderTradeLogAdapter
 
 POLL_INTERVAL_SECONDS = 1.0
@@ -105,6 +108,39 @@ def _ticktrader_latency_path(run_dir: Path, channel: str) -> Path:
 
 def _rustle_health_log_path(run_dir: Path) -> Path:
     return run_dir / "health_log.jsonl"
+
+
+def _run_symbols(project: str, manifest: dict) -> list[str]:
+    """Every real instrument this run trades, resolved from its config (the
+    run's own *input*, unlike its trade log) - used only to pick which
+    `data/{symbol}/tick_data/` file(s) the independent collector is writing
+    for it. A rustle multi-symbol config with unresolvable slots (or a
+    manifest-less run with no config_path at all) yields no symbols here,
+    same limitation the old per-slot fallback had - not something tailing the
+    collector's own files can fix without a symbol name to look up."""
+    config_path = manifest.get("config_path")
+    if not config_path:
+        return []
+    if project == "rustle":
+        return sorted(set(_load_slot_symbols(Path(config_path)).values()))
+    try:
+        data = tomllib.loads(Path(config_path).read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    symbol = data.get("symbol")
+    return [symbol] if isinstance(symbol, str) and symbol else []
+
+
+def _resolve_run_day(project: str, run_dir: Path, manifest: dict) -> str:
+    if project == "ticktrader":
+        return ticktrader_run_date(run_dir, manifest)
+    config_path = manifest.get("config_path")
+    run_date = _load_run_date(Path(config_path)) if config_path else None
+    return run_date or datetime.now().strftime("%Y%m%d")
+
+
+def _market_tick_path(cwd: Path, symbol: str, day: str) -> Path:
+    return cwd / "data" / symbol / "tick_data" / f"{day}.txt"
 
 
 def _rustle_latency_snapshot(run_dir: Path) -> dict[str, list[LatencySample]]:
@@ -253,13 +289,23 @@ class _LiveState:
     symbol_prices: dict[str, list[PricePoint]] = field(default_factory=dict)
     channel_latency: dict[str, list[LatencySample]] = field(default_factory=dict)
     latency_adapters: dict[str, LogSourceAdapter] = field(default_factory=dict)
+    market_adapters: dict[str, LogSourceAdapter] = field(default_factory=dict)
     subscribers: list["asyncio.Queue[Delta | None]"] = field(default_factory=list)
 
 
 class LiveIngestionManager:
-    def __init__(self, rustle_root: Path | None, ticktrader_root: Path | None) -> None:
+    def __init__(
+        self,
+        rustle_root: Path | None,
+        ticktrader_root: Path | None,
+        rustle_cwd: Path | None = None,
+        ticktrader_cwd: Path | None = None,
+    ) -> None:
         self._rustle_root = rustle_root
         self._ticktrader_root = ticktrader_root
+        # Where each project's independent market-data collector writes
+        # `data/{symbol}/tick_data/{day}.txt` - see `_tail_market_prices`.
+        self._cwds = {"rustle": rustle_cwd, "ticktrader": ticktrader_cwd}
         self._live: dict[RunKey, _LiveState] = {}
         self._completed_cache: dict[RunKey, Overview] = {}
         self._task: asyncio.Task | None = None
@@ -322,7 +368,11 @@ class LiveIngestionManager:
             parsed = state.adapter.tail()
             equity, trades = parsed.equity, parsed.trades
             pnl, win_rates, fills, health = parsed.pnl, parsed.win_rates, parsed.fills, parsed.health
-            prices = parsed.symbol_prices
+
+        # Market prices always come from the independent collector, not the
+        # trade log above - so they keep flowing even when that log is
+        # encrypted-locked (`state.adapter is None`).
+        prices = self._tail_market_prices(project, run_dir, manifest, state.market_adapters)
 
         if project == "ticktrader":
             # TickTrader-para's latency channels live in their own files, so they keep
@@ -354,6 +404,39 @@ class LiveIngestionManager:
         )
         for queue in state.subscribers:
             queue.put_nowait(delta)
+
+    def _tail_market_prices(
+        self,
+        project: str,
+        run_dir: Path,
+        manifest: dict,
+        adapters: dict[str, LogSourceAdapter] | None,
+    ) -> dict[str, list[PricePoint]]:
+        """Tail (or, with `adapters=None`, one-shot read) each of this run's
+        real instruments' price file from the independent collector's `data/`
+        tree - never the strategy's own trade log, which fragments one
+        instrument into a fake per-slot "symbol" whenever `_run_symbols` can't
+        resolve a real one."""
+        cwd = self._cwds.get(project)
+        if cwd is None:
+            return {}
+        day = _resolve_run_day(project, run_dir, manifest)
+        result: dict[str, list[PricePoint]] = {}
+        for symbol in _run_symbols(project, manifest):
+            path = _market_tick_path(cwd, symbol, day)
+            if not path.is_file():
+                continue
+            if adapters is None:
+                points = MarketTickAdapter(path, symbol=symbol, day=day).tail().symbol_prices.get(symbol, [])
+            else:
+                adapter = adapters.get(symbol)
+                if adapter is None:
+                    adapter = MarketTickAdapter(path, symbol=symbol, day=day)
+                    adapters[symbol] = adapter
+                points = adapter.tail().symbol_prices.get(symbol, [])
+            if points:
+                result[symbol] = points
+        return result
 
     def _poll_ticktrader_latency(
         self, run_dir: Path, state: "_LiveState"
@@ -417,14 +500,23 @@ class LiveIngestionManager:
         else:
             channel_latency = {}
 
+        # Independent of the trade log below (which may not exist yet, or be
+        # encrypted-locked) - see `_tail_market_prices`.
+        symbol_prices = {
+            symbol: points[-PRICE_HISTORY_LIMIT:]
+            for symbol, points in self._tail_market_prices(project, run_dir, manifest, None).items()
+        }
+
         if not log_paths:
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=False,
+                symbol_prices=symbol_prices,
                 channel_latency=channel_latency,
             )
         elif any(is_encrypted(p) for p in log_paths):
             overview = Overview(
                 run_id=run_id, project=project, status=status, encrypted_locked=True,
+                symbol_prices=symbol_prices,
                 channel_latency=channel_latency,
             )
         else:
@@ -444,7 +536,7 @@ class LiveIngestionManager:
                 equity=_bucket_equity(parsed.equity), trades=parsed.trades,
                 pnl=list(latest_pnl.values()), win_rates=list(latest_win_rates.values()),
                 fills=list(fill_totals.values()), health=list(latest_health.values()),
-                symbol_prices={k: v[-PRICE_HISTORY_LIMIT:] for k, v in parsed.symbol_prices.items()},
+                symbol_prices=symbol_prices,
                 channel_latency=channel_latency,
                 fill_history=fill_history,
             )

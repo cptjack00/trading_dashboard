@@ -83,7 +83,10 @@ def _overview_json(overview) -> dict:
 
 
 def create_app(settings: Settings, *, frontend_dist: Path = DEFAULT_FRONTEND_DIST) -> FastAPI:
-    live_manager = LiveIngestionManager(settings.rustle_runs_dir, settings.ticktrader_runs_dir)
+    live_manager = LiveIngestionManager(
+        settings.rustle_runs_dir, settings.ticktrader_runs_dir,
+        settings.rustle_cwd, settings.ticktrader_cwd,
+    )
     process_registry = ProcessRegistry(settings.process_registry_file, settings.stop_log_file)
 
     @asynccontextmanager

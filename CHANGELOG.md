@@ -182,6 +182,14 @@
 
 ### Changed
 
+- Market tab's price series is now read straight from each project's own
+  independent market-data collector (`data/{symbol}/tick_data/{day}.txt`,
+  written by `tt-collect`/`collect_mqtt_data_v4.py` outside this dashboard)
+  instead of re-derived from the strategy's own trade-log fills. Fixes a
+  multi-slot rustle run showing one fake per-slot "market" chart instead of
+  one real chart per instrument, whenever no `config_path` slot→symbol
+  mapping was available; also means the Market tab now works even when the
+  trade log itself is encrypted-locked.
 - Market tab no longer marks individual trade fills as dots on the price
   line — just the matched price series, which is what the tab is actually
   for; per-trade detail already lives in the trade log.

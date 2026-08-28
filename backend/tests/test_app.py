@@ -3,6 +3,7 @@ import os
 import signal
 import stat
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -313,13 +314,21 @@ def test_config_scan_empty_when_no_roots_configured(settings, tmp_path):
 
 def test_run_overview_includes_performance_and_market_fields(settings, tmp_path):
     # This run has no health_log.jsonl (see test_live.py for that adapter), so
-    # it only covers what trade_log.jsonl drives: pnl, win rate, fills, and
-    # per-symbol matched prices.
+    # it only covers what trade_log.jsonl drives (pnl, win rate, fills) plus
+    # the Market tab's price series, which comes from the independent
+    # collector's own data/ tree, not from the trade log above.
     run_dir = tmp_path / "rustle-runs" / "run-1"
     run_dir.mkdir(parents=True)
+    config_path = tmp_path / "run-1.toml"
+    config_path.write_text(
+        '[[multi_symbol.slots]]\nslot_label = "s1"\n[multi_symbol.slots.config]\nsymbol = "XYZ-PERP"\n'
+    )
     (run_dir / "run.json").write_text(
         json.dumps(
-            {"run_id": "run-1", "run_type": "live", "state": "live", "started_at": 1.0, "ended_at": None}
+            {
+                "run_id": "run-1", "run_type": "live", "state": "live", "started_at": 1.0, "ended_at": None,
+                "config_path": str(config_path),
+            }
         )
     )
     (run_dir / "trade_log.jsonl").write_text(
@@ -342,6 +351,11 @@ def test_run_overview_includes_performance_and_market_fields(settings, tmp_path)
         + "\n"
     )
     settings.rustle_runs_dir = tmp_path / "rustle-runs"
+    settings.rustle_cwd = tmp_path / "rustle-cwd"
+    day = datetime.now().strftime("%Y%m%d")
+    tick_dir = settings.rustle_cwd / "data" / "XYZ-PERP" / "tick_data"
+    tick_dir.mkdir(parents=True)
+    (tick_dir / f"{day}.txt").write_text('09:00:00.500 {"price":1.25,"qty":1,"side":"buy"}\n')
     client = make_client(settings, tmp_path)
     login(client)
     client.app.state.live_manager.poll_once()
@@ -355,7 +369,9 @@ def test_run_overview_includes_performance_and_market_fields(settings, tmp_path)
     [win_rate] = body["win_rates"]
     assert (win_rate["wins"], win_rate["losses"]) == (1, 0)
     assert body["fills"] == [{"ts": pnl["ts"], "slot": "s1", "count": 1}]
-    assert body["symbol_prices"]["s1"][0]["price"] == 1.0  # no config_path - symbol falls back to slot_id
+    # One chart for the real symbol every "s1"-labeled slot trades, sourced
+    # from the collector's own tick file - not a per-slot fake "symbol".
+    assert body["symbol_prices"]["XYZ-PERP"][0]["price"] == 1.25
 
 
 def _filled_row_json(slot: str, timestamp: str, pnl: float) -> str:

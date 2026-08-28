@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from signal_deck.live import LiveIngestionManager
@@ -150,12 +151,24 @@ def test_get_overview_unknown_run_returns_none(tmp_path: Path):
 def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     root = tmp_path / "rustle-runs"
     run_dir = root / "run-1"
-    _write_manifest(run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None)
+    config_path = tmp_path / "run-1.toml"
+    config_path.write_text(
+        '[[multi_symbol.slots]]\nslot_label = "s1"\n[multi_symbol.slots.config]\nsymbol = "XYZ-PERP"\n'
+    )
+    _write_manifest(
+        run_dir, run_id="run-1", run_type="live", state="live", started_at=1.0, ended_at=None,
+        config_path=str(config_path),
+    )
     (run_dir / "trade_log.jsonl").write_text(
         _rustle_trade_log(_filled_row("s1", "09:00:00.000", 1.0, price=10.0, side="BUY", position=0))
     )
+    cwd = tmp_path / "rustle-cwd"
+    day = datetime.now().strftime("%Y%m%d")
+    tick_dir = cwd / "data" / "XYZ-PERP" / "tick_data"
+    tick_dir.mkdir(parents=True)
+    (tick_dir / f"{day}.txt").write_text('09:00:00.500 {"price":10.5,"qty":1,"side":"buy"}\n')
 
-    manager = LiveIngestionManager(root, None)
+    manager = LiveIngestionManager(root, None, cwd, None)
     manager.poll_once()
 
     overview = manager.get_overview("rustle", "run-1")
@@ -165,13 +178,17 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     assert (win_rate.wins, win_rate.losses) == (1, 0)  # flat -> flat, 0 -> 1.0 is a win
     [fill] = overview.fills
     assert fill.count == 1
-    prices = overview.symbol_prices["s1"]  # no config_path in this manifest - symbol falls back to slot_id
-    assert len(prices) == 1 and prices[0].trade.side == "buy"
+    # One chart for the real symbol every "s1"-labeled slot trades, read from
+    # the independent collector's own tick file - not the trade log above.
+    prices = overview.symbol_prices["XYZ-PERP"]
+    assert len(prices) == 1 and prices[0].price == 10.5
 
     # A second fill for the same slot accumulates the fill count rather than
     # replacing it, and pnl/win-rate move to the latest snapshot.
     with (run_dir / "trade_log.jsonl").open("a") as f:
         f.write(json.dumps(_filled_row("s1", "09:00:01.000", -2.0, price=9.0, side="SELL", position=0)) + "\n")
+    with (tick_dir / f"{day}.txt").open("a") as f:
+        f.write('09:00:01.500 {"price":9.5,"qty":1,"side":"sell"}\n')
     manager.poll_once()
 
     overview = manager.get_overview("rustle", "run-1")
@@ -181,6 +198,7 @@ def test_performance_and_market_data_flows_for_live_rustle_run(tmp_path: Path):
     assert pnl.realized == -2.0  # latest wins, not summed
     [win_rate] = overview.win_rates
     assert (win_rate.wins, win_rate.losses) == (1, 1)  # second round trip's delta (1.0 -> -2.0) is a loss
+    assert [p.price for p in overview.symbol_prices["XYZ-PERP"]] == [10.5, 9.5]
 
 
 def test_live_tracked_is_false_for_completed_runs(tmp_path: Path):
