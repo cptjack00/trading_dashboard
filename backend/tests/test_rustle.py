@@ -77,6 +77,24 @@ def test_win_rate_derived_from_realized_pnl_delta_over_flat_to_flat_round_trips(
     assert by_slot_final["s2"].losses == 0
 
 
+def test_win_rate_marks_a_slot_open_while_mid_position(tmp_path: Path):
+    # s1's first FILLED row opens a position (never scored as a win/loss on
+    # its own) and its second closes flat (the completed round trip, scored);
+    # s2's only row opens and never returns to flat in this fixture. A slot
+    # marked `open` still carries its running PnL - just not yet counted as
+    # that round trip's eventual win or loss.
+    path = tmp_path / "trade_log.jsonl"
+    path.write_bytes(FIXTURE.read_bytes())
+    result = RustleAdapter(path, config_path=CONFIG).tail()
+
+    by_slot = {}
+    for w in result.win_rates:
+        by_slot.setdefault(w.slot, []).append(w)
+
+    assert [w.open for w in by_slot["s1"]] == [True, False]
+    assert [w.open for w in by_slot["s2"]] == [True]
+
+
 def test_fills_increment_by_one_per_filled_row(tmp_path: Path):
     path = tmp_path / "trade_log.jsonl"
     path.write_bytes(FIXTURE.read_bytes())

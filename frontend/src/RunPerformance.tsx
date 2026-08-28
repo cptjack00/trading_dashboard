@@ -1,10 +1,10 @@
 type PnLPoint = { ts: number; slot: string; realized: number; unrealized: number }
-type WinRatePoint = { ts: number; slot: string; wins: number; losses: number }
+type WinRatePoint = { ts: number; slot: string; wins: number; losses: number; open: boolean }
 type FillsPoint = { ts: number; slot: string; count: number }
 
 function formatWinRate(wins: number, losses: number): string {
   const total = wins + losses
-  return total === 0 ? '—' : `${((wins / total) * 100).toFixed(1)}%`
+  return total === 0 ? '—' : `${((wins / total) * 100).toFixed(1)}% (${wins}-${losses})`
 }
 
 export default function RunPerformance({
@@ -29,6 +29,7 @@ export default function RunPerformance({
   const totalWins = winRates.reduce((sum, w) => sum + w.wins, 0)
   const totalLosses = winRates.reduce((sum, w) => sum + w.losses, 0)
   const totalFills = fills.reduce((sum, f) => sum + f.count, 0)
+  const anyOpen = winRates.some((w) => w.open)
 
   return (
     <>
@@ -51,7 +52,12 @@ export default function RunPerformance({
               <tr key={slot}>
                 <td>{slot}</td>
                 <td>{w ? formatWinRate(w.wins, w.losses) : '—'}</td>
-                <td className={slotPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>{slotPnl.toFixed(2)}</td>
+                <td className={slotPnl >= 0 ? 'run-pnl--pos' : 'run-pnl--neg'}>
+                  {slotPnl.toFixed(2)}
+                  {w?.open && (
+                    <sup title="Position still open - its PnL isn't counted as a win or loss yet">*</sup>
+                  )}
+                </td>
                 <td>{f?.count ?? 0}</td>
               </tr>
             )
@@ -66,6 +72,12 @@ export default function RunPerformance({
           </tr>
         </tfoot>
       </table>
+      {anyOpen && (
+        <p className="latency-stats">
+          * still in an open position — its PnL is already counted above but won't be scored as a win or loss
+          until it closes flat.
+        </p>
+      )}
     </>
   )
 }

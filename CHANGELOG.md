@@ -182,6 +182,13 @@
 
 ### Changed
 
+- Performance table's win rate now also shows the raw win-loss count (e.g.
+  `83.3% (5-1)`), and a slot with an open (not-yet-flat) position is marked
+  with a `*` next to its PnL: win/loss is only scored on a completed
+  flat-to-flat round trip, so a slot can legitimately show a strong win rate
+  next to negative PnL when its still-open position is currently a loser
+  that hasn't closed (and been scored) yet — this was previously
+  unexplained and looked like a bug.
 - Market tab's price series is now read straight from each project's own
   independent market-data collector (`data/{symbol}/tick_data/{day}.txt`,
   written by `tt-collect`/`collect_mqtt_data_v4.py` outside this dashboard)

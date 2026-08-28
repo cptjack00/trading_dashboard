@@ -8,7 +8,7 @@ import { LineChart, StepChart } from './charts'
 type EquityPoint = { ts: number; equity: number }
 type TradeRow = { ts: number; symbol: string; side: string; price: number; qty: number; slot: string | null }
 type PnLPoint = { ts: number; slot: string; realized: number; unrealized: number }
-type WinRatePoint = { ts: number; slot: string; wins: number; losses: number }
+type WinRatePoint = { ts: number; slot: string; wins: number; losses: number; open: boolean }
 type FillsPoint = { ts: number; slot: string; count: number }
 type HealthPoint = { ts: number; component: string; ok: boolean; detail: string | null }
 type PricePoint = { ts: number; price: number; trade: TradeRow | null }

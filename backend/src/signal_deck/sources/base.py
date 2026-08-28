@@ -61,6 +61,11 @@ class WinRate:
     slot: str
     wins: int
     losses: int
+    # Whether the slot was mid-position (not flat) as of this row - a win/loss
+    # is only scored on a flat-to-flat round trip (see rustle.py's
+    # RustleAdapter), so an open slot's PnL can already reflect a losing trade
+    # this count doesn't include yet, until it eventually closes.
+    open: bool = False
 
 
 @dataclass(frozen=True)

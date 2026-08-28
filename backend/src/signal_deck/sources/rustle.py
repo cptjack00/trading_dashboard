@@ -107,7 +107,11 @@ class RustleAdapter(LogSourceAdapter):
                 self._slot_losses[slot] = self._slot_losses.get(slot, 0) + 1
             self._slot_open_realized[slot] = realized
         into.win_rates.append(
-            WinRate(ts=ts, slot=slot, wins=self._slot_wins.get(slot, 0), losses=self._slot_losses.get(slot, 0))
+            WinRate(
+                ts=ts, slot=slot,
+                wins=self._slot_wins.get(slot, 0), losses=self._slot_losses.get(slot, 0),
+                open=row["position"] != 0,
+            )
         )
 
         into.fills.append(Fills(ts=ts, slot=slot, count=1))
