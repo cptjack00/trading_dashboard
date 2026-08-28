@@ -68,6 +68,7 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [comparing, setComparing] = useState<Run[] | null>(null)
   const [showConfigRoots, setShowConfigRoots] = useState(false)
   const [showNewRun, setShowNewRun] = useState(false)
+  const [railCollapsed, setRailCollapsed] = useState(false)
 
   const selectedRun = selectedKey ? runs.find((r) => runKey(r) === selectedKey) ?? null : null
 
@@ -98,53 +99,63 @@ function DashboardShell({ onLoggedOut }: { onLoggedOut: () => void }) {
     <div className="shell">
       <Topstrip runs={runs} />
       <div className="workspace">
-        <aside className="rail">
-          <div className="rail-head">
-            <span className="eyebrow">Runs</span>
-            <div className="rail-actions">
-              <button className="new-run-btn" onClick={refreshRuns} title="Rescan runs now">
-                ⟳ Rescan
+        {!railCollapsed && (
+          <aside className="rail">
+            <div className="rail-head">
+              <span className="eyebrow">Runs</span>
+              <div className="rail-actions">
+                <button className="new-run-btn" onClick={refreshRuns} title="Rescan runs now">
+                  ⟳ Rescan
+                </button>
+                <button
+                  className={`new-run-btn${compareMode ? ' on' : ''}`}
+                  onClick={() => (compareMode ? exitCompareMode() : setCompareMode(true))}
+                >
+                  ⇄ Compare
+                </button>
+                <button className="new-run-btn" onClick={() => setShowNewRun(true)}>
+                  + New run
+                </button>
+                <button className="new-run-btn rail-collapse" onClick={() => setRailCollapsed(true)} title="Collapse panel">
+                  ⟨⟨
+                </button>
+              </div>
+            </div>
+            <RunList
+              runs={runs}
+              activeKey={selectedKey ?? undefined}
+              onSelectRun={selectRun}
+              compareMode={compareMode}
+              selectedKeys={new Set(compareSelection.map(runKey))}
+              onToggleCompare={toggleCompareSelection}
+            />
+            {compareMode && (
+              <div className="compare-bar">
+                <span>{compareSelection.length} of 2–4 runs selected</span>
+                <button className="btn-mini go" disabled={compareSelection.length < 2} onClick={() => setComparing(compareSelection)}>
+                  Compare
+                </button>
+                <button className="btn-mini" onClick={exitCompareMode}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            <div className="rail-foot">
+              <button className="new-run-btn" onClick={() => setShowConfigRoots(true)}>
+                Config roots
               </button>
-              <button
-                className={`new-run-btn${compareMode ? ' on' : ''}`}
-                onClick={() => (compareMode ? exitCompareMode() : setCompareMode(true))}
-              >
-                ⇄ Compare
-              </button>
-              <button className="new-run-btn" onClick={() => setShowNewRun(true)}>
-                + New run
+              <button className="new-run-btn" onClick={handleLogout}>
+                Log out
               </button>
             </div>
-          </div>
-          <RunList
-            runs={runs}
-            activeKey={selectedKey ?? undefined}
-            onSelectRun={selectRun}
-            compareMode={compareMode}
-            selectedKeys={new Set(compareSelection.map(runKey))}
-            onToggleCompare={toggleCompareSelection}
-          />
-          {compareMode && (
-            <div className="compare-bar">
-              <span>{compareSelection.length} of 2–4 runs selected</span>
-              <button className="btn-mini go" disabled={compareSelection.length < 2} onClick={() => setComparing(compareSelection)}>
-                Compare
-              </button>
-              <button className="btn-mini" onClick={exitCompareMode}>
-                Cancel
-              </button>
-            </div>
-          )}
-          <div className="rail-foot">
-            <button className="new-run-btn" onClick={() => setShowConfigRoots(true)}>
-              Config roots
-            </button>
-            <button className="new-run-btn" onClick={handleLogout}>
-              Log out
-            </button>
-          </div>
-        </aside>
+          </aside>
+        )}
         <main className="stage">
+          {railCollapsed && (
+            <button className="rail-expand" onClick={() => setRailCollapsed(false)} title="Expand panel">
+              ⟩⟩
+            </button>
+          )}
           {comparing ? (
             <RunComparison
               runs={comparing}

@@ -233,6 +233,20 @@ select:focus-visible {
   display: flex;
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+.rail-expand {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
 }
 
 .rail {
